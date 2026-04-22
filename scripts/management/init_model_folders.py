@@ -1,6 +1,7 @@
 import os
 import csv
 import sys
+import metadata_utils
 
 # [!] ИСПРАВЛЕНИЕ ПУТИ: config лежит в той же папке /scripts/
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -30,7 +31,7 @@ def create_structure():
             # Название папки рода: Всегда с большой буквы
             genus_folder = raw_genus.capitalize()
             
-            # Название папки вида: Полное имя, как ты просил (Tyrannosaurus rex)
+            # Название папки вида
             if raw_species in ["-", "", "sp.", "null"]:
                 species_folder = genus_folder
             else:
@@ -44,19 +45,14 @@ def create_structure():
             os.makedirs(os.path.join(species_path, "sources"), exist_ok=True)
             os.makedirs(os.path.join(species_path, "textures"), exist_ok=True)
             
-            # Файл инфо: "Tyrannosaurus rex info.txt"
+            # Файл инфо
             info_file_name = f"{species_folder} info.txt"
             info_file_path = os.path.join(species_path, info_file_name)
             
             if not os.path.exists(info_file_path):
-                template = (
-                    f"base_specimen:\n"
-                    f"scale_specimen:\n"
-                    f"skeletal:\n"
-                    f"model:\n"
-                    f"texture:\n"
-                    f"rig:\n"
-                )
+                # Используем централизованный модуль, передаем вид в нижнем регистре
+                template = metadata_utils.get_info_template(genus_folder, raw_species.lower())
+                
                 with open(info_file_path, 'w', encoding='utf-8') as info_f:
                     info_f.write(template)
                 created_count += 1
