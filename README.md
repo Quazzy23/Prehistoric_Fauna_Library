@@ -1,4 +1,4 @@
-# Prehistoric Fauna Library v4.0 🦖
+# Prehistoric Fauna Library
 
 A scientifically accurate data pipeline and 3D asset management system for prehistoric fauna.
 
