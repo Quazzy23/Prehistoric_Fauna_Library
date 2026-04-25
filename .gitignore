@@ -9,7 +9,7 @@ __pycache__/
 Bbront.txt
 
 # Игнорируем базу данных
-database/*.sqlite
+database/
 
 # Игнорируем расходники экспорта (кроме критических)
 data/exports/*.csv
