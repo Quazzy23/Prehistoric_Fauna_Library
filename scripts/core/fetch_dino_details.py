@@ -13,8 +13,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 # Добавляем путь к папке scripts, чтобы увидеть config.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.dont_write_bytecode = True
 import config
+import audit_tool
 
 # --- ПУТИ И НАСТРОЙКИ ---
 USE_CUSTOM_LIST = config.USE_CUSTOM_LIST
@@ -25,7 +25,6 @@ INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "genera_list.csv")
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
 OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_data.csv")
 CLASSIFICATION_FILE = os.path.join(BASE_DIR, "data", "exports", "classification_library.csv")
-MIGRATION_MAP_FILE = os.path.join(BASE_DIR, "data", "exports", "migration_map.csv")
 
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
@@ -63,6 +62,7 @@ WIKI_TIMEOUT = 5  # Время ожидания ответа от Википед
 # Глобальный счетчик байт
 total_bytes_downloaded = 0
 total_duplicates_ignored = 0 # <--- Добавить
+current_session_facts = {} # Хранилище чистых данных для аудита (Ключ: Значение)
 
 def extract_classification(infobox):
     # Находит Род, Кладу, Ma и Ярус (с поддержкой диапазонов)
@@ -86,7 +86,12 @@ def extract_classification(infobox):
             age = f"{g1}–{g2}" if g2 else g1
 
         ians = re.findall(r'\b[A-Z][a-z]+ian\b', text)
-        if ians: stage = f"{ians[0]}-{ians[-1]}" if len(ians) >= 2 else ians[0]
+        if ians:
+            # Если нашли несколько, делаем диапазон, но только если они разные
+            if len(ians) >= 2 and ians[0] != ians[-1]:
+                stage = f"{ians[0]}-{ians[-1]}"
+            else:
+                stage = ians[0]
         else:
             period_match = re.search(r'\b((?:Early|Middle|Late|Upper|Lower)\s+)?(Cretaceous|Jurassic|Triassic|Permian)\b', text)
             if period_match: stage = period_match.group(0)
@@ -392,20 +397,9 @@ def check_and_report_historical(element, true_genus, reports):
             log_msg = f"{true_genus}: [HISTORICAL NOTE] Found synonym link: {name_only}"
             logging.warning(log_msg)
 
-            # 3. Добавление в карту миграции
-            if len(parts) >= 2:
-                old_species = parts[1].strip('.,? ')
-                if old_species and old_species[0].islower():
-                    migration_entry = {
-                        'old_genus': first_word,
-                        'old_species': old_species,
-                        'new_genus': true_genus,
-                        'new_species': old_species
-                    }
-                    with data_lock:
-                        reports['migrations'].append(migration_entry)
-                    # НОВОЕ: Лог о том, что миграция зафиксирована
-                    logging.info(f"{true_genus}: [MIGRATION MAPPED] {first_word} {old_species} -> {true_genus}")
+            # Оставляем только это для Аудитора:
+            with data_lock:
+                current_session_facts[f"{true_genus}:HIST:{name_only}"] = "exists"
 
 def extract_synonym_data(element, true_genus):
     """Извлекает синонимы. Исправлено сохранение авторов (small) и вложенные списки."""
@@ -658,6 +652,8 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
     age_clean = str(age).strip()
     age_display = f"{age_clean} Ma" if age_clean not in [MISSING_VAL, ""] else MISSING_VAL
     logging.info(f"{genus}: [DATA] {clade} | {age_display} | {stage}")
+    with data_lock:
+            current_session_facts[f"{genus}:DATA"] = f"{clade} | {age_display} | {stage}"
 
     # --- ЛОГИКА ПОЛНОЙ КЛАССИФИКАЦИИ ---
     if clade != MISSING_VAL:
@@ -802,10 +798,20 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                             
                             if res_status == "added":
                                 main_species_count += 1
+                                # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
+                                fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
+                                with data_lock:
+                                    current_session_facts[f"{genus}:MAIN:{info['species']}"] = fact_val
+                                # ------------------------------
                                 audit_buffer.append({'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'], 'meta_note': current_meta_note})
                                 check_and_report_historical(item, true_genus, reports)
                             elif res_status == "upgraded":
                                 main_species_count += 1
+                                # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
+                                fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
+                                with data_lock:
+                                    current_session_facts[f"{genus}:MAIN:{info['species']}"] = fact_val
+                                # ------------------------------
                                 audit_buffer.append({
                                     'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'],
                                     'upgrade_note': '(upgraded metadata)', 'meta_note': current_meta_note
@@ -842,12 +848,22 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                         if res_status == "added":
                                             syn_species_count += 1
                                             seen_species_on_page.add(s_species.lower())
+                                            # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
+                                            fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
+                                            with data_lock:
+                                                current_session_facts[f"{genus}:SYNONYM:{s_species}"] = fact_val
+                                            # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
                                                 'status': s_info['status'], 'author': s_info['author'], 'year': s_info['year']
                                             })
                                         elif res_status == "upgraded":
                                             syn_species_count += 1
+                                            # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
+                                            fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
+                                            with data_lock:
+                                                current_session_facts[f"{genus}:SYNONYM:{s_species}"] = fact_val
+                                            # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
                                                 'status': s_info['status'], 'author': s_info['author'], 'year': s_info['year'],
@@ -934,7 +950,6 @@ def start_mass_parsing():
     all_results = []
     reports = {
         'hist_notes': [],
-        'migrations': [],
         'found_as': [],
         'redirects': [], 
         'zero_species': [],
@@ -1017,7 +1032,6 @@ def start_mass_parsing():
 
     save_to_csv(all_results, OUTPUT_FILE)
     save_classification_library(taxon_cache, CLASSIFICATION_FILE)
-    save_migration_map(reports['migrations'], MIGRATION_MAP_FILE)
 
     # Подсчет общего количества проблемных случаев
     # (0 видов + нет инфобокса + не тетраподы)
@@ -1025,8 +1039,10 @@ def start_mass_parsing():
     
     if total_suspicious > 0:
         print(f"Suspicious cases found: {total_suspicious}. Check logs for details.")
-
-    print("Script ended: FETCH_DINO_DETAILS")
+    
+    # --- ЗАПУСК АУДИТА (Вложенный скрипт) ---
+    input_filename = os.path.basename(src_path)
+    audit_tool.run_audit(current_session_facts, input_filename)
     
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")
@@ -1045,7 +1061,11 @@ def start_mass_parsing():
         logging.info(f"[{idx}] {title} ({len(items)})")
         for item in items:
             logging.info(item)
+
+    print("Script ended: FETCH_DINO_DETAILS")
     logging.info("--- SCRIPT END: FETCH_DINO_DETAILS ---")
+
+    return current_session_facts, input_filename
 
 def save_to_csv(all_results, filename):
     keys = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year"]
@@ -1095,40 +1115,6 @@ def save_classification_library(cache, filename):
 
     except Exception as e:
         error_msg = f"[ERROR] Could not save classification: {e}"
-        print(error_msg)
-        logging.error(error_msg)
-
-def save_migration_map(migrations, filename):
-    """Сохраняет связи старых и новых названий для миграции папок."""
-    if not migrations: 
-        logging.info("Migration Map: No entries to save.")
-        return
-        
-    keys = ['old_genus', 'old_species', 'new_genus', 'new_species']
-    try:
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=keys, delimiter=';')
-            writer.writeheader()
-            
-            seen = set()
-            count = 0
-            for m in migrations:
-                # ИСПРАВЛЕНО: создаем строку-идентификатор для проверки дубликатов
-                identifier = f"{m['old_genus']}_{m['old_species']}_{m['new_genus']}".lower()
-                
-                if identifier not in seen:
-                    writer.writerow(m)
-                    seen.add(identifier)
-                    count += 1
-                    
-        # ИСПРАВЛЕННЫЙ ВЫВОД:
-        msg = f"Migration map saved to {os.path.abspath(filename)}"
-        print(msg)          # Убрали \n в начале
-        logging.info(msg)   # Пишем стандартную строку в лог
-
-    except Exception as e:
-        error_msg = f"[ERROR] Failed to save migration map: {e}"
         print(error_msg)
         logging.error(error_msg)
 

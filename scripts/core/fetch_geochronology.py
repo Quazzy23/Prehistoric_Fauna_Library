@@ -7,7 +7,6 @@ import logging
 import sys
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.dont_write_bytecode = True
 import config
 
 # --- ПУТИ И НАСТРОЙКИ ---

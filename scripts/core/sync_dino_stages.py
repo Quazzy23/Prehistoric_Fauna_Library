@@ -5,7 +5,6 @@ import time
 import logging
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.dont_write_bytecode = True
 import config
 
 # --- ПУТИ К ФАЙЛАМ ---

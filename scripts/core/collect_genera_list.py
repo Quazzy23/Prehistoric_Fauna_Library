@@ -8,8 +8,6 @@ import csv
 
 # Добавляем путь к папке scripts, чтобы увидеть config.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# ОТКЛЮЧАЕМ СОЗДАНИЕ __pycache__ и .pyc файлов
-sys.dont_write_bytecode = True
 import config
 
 # --- ПУТИ И НАСТРОЙКИ ---

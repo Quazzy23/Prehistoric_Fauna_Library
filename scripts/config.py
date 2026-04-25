@@ -1,4 +1,6 @@
 import os
+import sys
+sys.dont_write_bytecode = True  # Глобальный запрет на __pycache__
 
 # ========================================================================
 # ГЛОБАЛЬНЫЕ НАСТРОЙКИ PREHISTORIC FAUNA LIBRARY
@@ -69,3 +71,8 @@ STATUS_WEIGHTS = {
 BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
 WIKI_LIST_URL = "https://en.wikipedia.org/wiki/List_of_dinosaur_genera"
 GEO_WIKI_URL  = "https://en.wikipedia.org/wiki/Geologic_time_scale"
+
+
+# [9] Путь к исполняемому файлу Blender для фоновых задач
+# (Обязательно используй префикс r перед кавычками, чтобы Windows понимала слэши)
+BLENDER_PATH = r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"
