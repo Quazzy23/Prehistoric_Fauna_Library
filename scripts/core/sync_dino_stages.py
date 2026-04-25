@@ -1,9 +1,10 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import csv
 import os
 import re
 import time
 import logging
-import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 

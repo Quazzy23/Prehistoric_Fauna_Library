@@ -1,3 +1,6 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
+
 def get_info_template(genus, species, data=None):
     """
     Единый стандарт структуры файла info.txt.

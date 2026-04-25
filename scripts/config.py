@@ -1,6 +1,6 @@
-import os
 import sys
 sys.dont_write_bytecode = True  # Глобальный запрет на __pycache__
+import os
 
 # ========================================================================
 # ГЛОБАЛЬНЫЕ НАСТРОЙКИ PREHISTORIC FAUNA LIBRARY

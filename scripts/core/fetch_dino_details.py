@@ -1,3 +1,5 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -8,7 +10,6 @@ import copy
 import os
 import time
 import logging
-import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 # Добавляем путь к папке scripts, чтобы увидеть config.py

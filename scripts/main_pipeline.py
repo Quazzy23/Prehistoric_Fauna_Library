@@ -1,11 +1,9 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import subprocess
-import sys
 import logging
 from datetime import datetime
-
-# 1. ОТКЛЮЧАЕМ СОЗДАНИЕ __pycache__
-sys.dont_write_bytecode = True
 
 # 2. ОПРЕДЕЛЯЕМ ПУТИ ДЛЯ ЛОГОВ (Чтобы настроить их ДО импорта конфига)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

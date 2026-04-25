@@ -1,3 +1,5 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import requests
 from bs4 import BeautifulSoup
 import re

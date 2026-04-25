@@ -1,5 +1,6 @@
-import os
 import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
+import os
 import logging
 import metadata_utils
 

@@ -1,7 +1,8 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import shutil
 import re
-import sys
 
 # Настройки путей
 # Источник (где лежат твои скачанные файлы)

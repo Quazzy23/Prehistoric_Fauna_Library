@@ -1,6 +1,7 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import csv
-import sys
 import logging
 
 # [2] ПОДГОТОВКА ПУТЕЙ И КОНФИГА

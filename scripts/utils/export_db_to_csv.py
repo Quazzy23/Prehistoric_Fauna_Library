@@ -1,7 +1,8 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import sqlite3
 import csv
 import os
-import sys
 
 # [!] ИСПРАВЛЕНИЕ ПУТИ: Поднимаемся из /scripts/utils/ в /scripts/
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

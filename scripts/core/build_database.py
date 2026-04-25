@@ -1,9 +1,10 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import sqlite3
 import csv
 import os
 import re
 import logging
-import sys
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config

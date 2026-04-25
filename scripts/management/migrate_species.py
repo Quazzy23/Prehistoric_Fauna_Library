@@ -1,12 +1,12 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import json
 import shutil
-import sys
 import logging
 import subprocess
 
 # [1] ПОДГОТОВКА И БЛОКИРОВКА КЭША
-sys.dont_write_bytecode = True
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 

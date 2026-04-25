@@ -1,14 +1,15 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import requests
 import os
 import re
 import time
 import logging
-import sys
 import csv
-
 # Добавляем путь к папке scripts, чтобы увидеть config.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+sys.dont_write_bytecode = True
 
 # --- ПУТИ И НАСТРОЙКИ ---
 WIKI_LIST_URL = config.WIKI_LIST_URL

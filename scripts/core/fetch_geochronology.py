@@ -1,10 +1,11 @@
+import sys
+sys.dont_write_bytecode = True  # Сначала запрещаем
 import requests
 from bs4 import BeautifulSoup
 import os
 import re
 import csv
 import logging
-import sys
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
