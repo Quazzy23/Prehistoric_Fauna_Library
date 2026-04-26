@@ -1,15 +1,24 @@
 import sys
 sys.dont_write_bytecode = True  # Глобальный запрет на __pycache__
 import os
+import json
 
 # ========================================================================
 # ГЛОБАЛЬНЫЕ НАСТРОЙКИ PREHISTORIC FAUNA LIBRARY
 # ========================================================================
 
 # [1] ИДЕНТИФИКАЦИЯ
-# Wikipedia просит указывать контактный email для ботов.
-# Это помогает избежать блокировок при интенсивных запросах.
-USER_EMAIL = "23spinosaurus@mail.ru"
+# Данные теперь берутся из локального файла настроек (user_settings.json)
+USER_EMAIL = "default@example.com" # Почта по умолчанию
+
+_settings_path = os.path.join(os.path.dirname(__file__), "user_settings.json")
+if os.path.exists(_settings_path):
+    try:
+        with open(_settings_path, 'r', encoding='utf-8') as f:
+            _data = json.load(f)
+            USER_EMAIL = _data.get("user_email", USER_EMAIL)
+    except Exception:
+        pass # Если файл битый, останется дефолтная почта
 
 
 # [2] ИСТОЧНИКИ ДАННЫХ

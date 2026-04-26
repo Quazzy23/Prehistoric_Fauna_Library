@@ -10,9 +10,9 @@ import config
 
 # --- ПУТИ К ФАЙЛАМ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "geochronology_data.csv")
-DINO_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_validated.csv")
-FINAL_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_final.csv")
+GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "geochronology_data.csv")
+DINO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_validated.csv")
+FINAL_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_final.csv")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")

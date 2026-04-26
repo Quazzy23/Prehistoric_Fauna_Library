@@ -12,9 +12,9 @@ import config
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_final.csv")
-GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "geochronology_data.csv")
-CLASSIFICATION_CSV = os.path.join(BASE_DIR, "data", "exports", "classification_library.csv")
+INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_final.csv")
+GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "geochronology_data.csv")
+CLASSIFICATION_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "classification_library.csv")
 
 DB_DIR = os.path.join(BASE_DIR, "database")
 DB_FILE = os.path.join(DB_DIR, config.DB_NAME)

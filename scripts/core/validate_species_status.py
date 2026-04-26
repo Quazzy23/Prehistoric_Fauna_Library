@@ -9,9 +9,9 @@ import config
 
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GENERA_LIST_CSV = os.path.join(BASE_DIR, "data", "exports", "genera_list.csv")
-DINO_DATA_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_data.csv")
-OUTPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_validated.csv")
+GENERA_LIST_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
+DINO_DATA_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_data.csv")
+OUTPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_validated.csv")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")

@@ -17,7 +17,7 @@ USER_EMAIL = config.USER_EMAIL
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # Новый путь для CSV
-GENERA_CSV = os.path.join(BASE_DIR, "data", "exports", "genera_list.csv")
+GENERA_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
 CUSTOM_DIR = os.path.join(BASE_DIR, "data", "custom_lists")
 
 # Настройка логов

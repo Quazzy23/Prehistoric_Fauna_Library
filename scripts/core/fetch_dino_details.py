@@ -22,10 +22,10 @@ USE_CUSTOM_LIST = config.USE_CUSTOM_LIST
 CUSTOM_LIST_NAME = config.CUSTOM_LIST_NAME
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "genera_list.csv")
+INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
-OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_data.csv")
-CLASSIFICATION_FILE = os.path.join(BASE_DIR, "data", "exports", "classification_library.csv")
+OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_data.csv")
+CLASSIFICATION_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "classification_library.csv")
 
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
@@ -1041,9 +1041,16 @@ def start_mass_parsing():
     if total_suspicious > 0:
         print(f"Suspicious cases found: {total_suspicious}. Check logs for details.")
     
-    # --- ЗАПУСК АУДИТА (Вложенный скрипт) ---
+# --- ЗАПУСК АУДИТА (Вложенный скрипт) ---
     input_filename = os.path.basename(src_path)
+    
+    logging.info("--- SCRIPT START: AUDIT_TOOL ---")
     audit_tool.run_audit(current_session_facts, input_filename)
+    
+    # Ссылка на подробный лог (Золотой стандарт)
+    audit_log_path = os.path.join(BASE_DIR, "data", "logs", "audit_tool.log")
+    logging.info(f"See audit details in: {os.path.abspath(audit_log_path)}")
+    logging.info("--- SCRIPT END: AUDIT_TOOL ---")
     
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")
@@ -1063,7 +1070,7 @@ def start_mass_parsing():
         for item in items:
             logging.info(item)
 
-    print("Script ended: FETCH_DINO_DETAILS")
+    print("\nScript ended: FETCH_DINO_DETAILS")
     logging.info("--- SCRIPT END: FETCH_DINO_DETAILS ---")
 
     return current_session_facts, input_filename
