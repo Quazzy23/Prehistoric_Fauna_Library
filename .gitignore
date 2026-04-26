@@ -5,6 +5,9 @@ models/
 data/logs/
 __pycache__/
 
+# Настройки пользователя
+scripts/user_settings.json
+
 # --- Временные файлы и черновики ---
 Bbront.txt
 
@@ -12,7 +15,7 @@ Bbront.txt
 database/
 
 # Игнорируем расходники экспорта (кроме критических)
-data/exports/*.csv
+data/exports/tables/
 data/exports/snapshots/
 data/project_history.txt
 

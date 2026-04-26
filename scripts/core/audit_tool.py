@@ -1,5 +1,5 @@
 import sys
-sys.dont_write_bytecode = True  # Сначала запрещаем
+sys.dont_write_bytecode = True
 import os
 import json
 import logging
@@ -12,71 +12,85 @@ HISTORY_FILE = os.path.join(BASE_DIR, "data", "project_history.txt")
 MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "audit_tool.log")
 
-# Настройка лога
+# Настройка лога (Золотой Стандарт)
 logger = logging.getLogger("audit_tool")
 logger.setLevel(logging.INFO)
+logger.propagate = False # <--- ЭТА СТРОКА ОСТАНОВИТ ДУБЛИРОВАНИЕ
 if logger.hasHandlers(): logger.handlers.clear()
 handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
 handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 logger.addHandler(handler)
 
 def run_audit(current_facts, source_filename):
-    """Сравнивает данные и ведет летопись. Логи синхронизированы с консолью."""
-    print("Starting script: AUDIT_TOOL")
-    logger.info(f"=== AUDIT SESSION START: {source_filename} ===")
+    """Глубокий аудит данных с полной детализацией и итоговыми списками."""
+    print("\nStarting script: AUDIT_TOOL")
+    logger.info("--- SCRIPT START: AUDIT_TOOL ---")
     
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-    snapshot_path = os.path.join(SNAPSHOT_DIR, f"{source_filename}.json")
+    # Убираем .csv из имени (например, genera_list.csv -> genera_list)
+    clean_name = source_filename.split('.')[0]
+    snapshot_path = os.path.join(SNAPSHOT_DIR, f"{clean_name}.json")
     
-    # 1. Загружаем прошлое
+    # 1. Загрузка данных
     old_facts = {}
     is_first_run = not os.path.exists(snapshot_path)
-    if is_first_run:
-        msg = f"No previous snapshot found for {source_filename}. Initializing baseline."
-        logger.info(msg)
-    else:
+    if not is_first_run:
         try:
             with open(snapshot_path, 'r', encoding='utf-8') as f:
                 old_facts = json.load(f)
-            logger.info(f"Loaded previous snapshot with {len(old_facts)} facts.")
+            logger.info(f"Loaded technical snapshot: {os.path.abspath(snapshot_path)}")
         except Exception as e:
             logger.error(f"Failed to load snapshot: {e}")
 
-    # 2. Загружаем базу миграций
     known_migrations = {}
     if os.path.exists(MIGRATIONS_FILE):
         try:
             with open(MIGRATIONS_FILE, 'r', encoding='utf-8') as f:
                 known_migrations = json.load(f)
-            logger.info(f"Loaded migration registry: {len(known_migrations)} entries.")
         except Exception as e:
             logger.error(f"Failed to load migrations file: {e}")
 
-    changes = []
-    new_migrations_found = 0
+    # Списки для итогового отчета
+    report_data = {
+        'NEW': [],
+        'UPDATED': [],
+        'LOST': [],
+        'MIGRATIONS': []
+    }
     
-    # Вывод процесса
     status_msg = f"Analyzing {len(current_facts)} currently extracted facts..."
     print(f"Audit: {status_msg}")
     logger.info(status_msg)
 
-    # 3. СРАВНЕНИЕ (Только если это НЕ первый запуск)
-    if not is_first_run:
-        all_keys = set(old_facts.keys()) | set(current_facts.keys())
-        for key in sorted(all_keys):
-            if ":HIST:" in key: continue # Обрабатываем отдельно
+    # 2. СРАВНЕНИЕ (Основной цикл)
+    all_keys = sorted(list(set(old_facts.keys()) | set(current_facts.keys())))
+    
+    for key in all_keys:
+        if ":HIST:" in key: continue # Обработка миграций ниже
 
-            old_val = old_facts.get(key)
-            new_val = current_facts.get(key)
+        old_val = old_facts.get(key)
+        new_val = current_facts.get(key)
 
-            if old_val is None and new_val is not None:
-                changes.append(f"[NEW] {key}: {new_val}")
-            elif old_val is not None and new_val is None:
-                changes.append(f"[LOST] {key}: {old_val}")
-            elif old_val != new_val:
-                changes.append(f"[UPDATED] {key}: {old_val} -> {new_val}")
+        if is_first_run:
+            logger.info(f"[OK] {key}: {new_val}")
+            continue
 
-    # 4. ОБРАБОТКА МИГРАЦИЙ (Historical Notes)
+        if old_val is None and new_val is not None:
+            msg = f"[NEW] {key}: {new_val}"
+            logger.warning(msg)
+            report_data['NEW'].append(msg)
+        elif old_val is not None and new_val is None:
+            msg = f"[LOST] {key}: {old_val}"
+            logger.warning(msg)
+            report_data['LOST'].append(msg)
+        elif old_val != new_val:
+            msg = f"[UPDATED] {key}: {old_val} -> {new_val}"
+            logger.warning(msg)
+            report_data['UPDATED'].append(msg)
+        else:
+            logger.info(f"[OK] {key}: {new_val}")
+
+    # 3. ОБРАБОТКА МИГРАЦИЙ
     for key, val in current_facts.items():
         if ":HIST:" in key:
             old_full_name = key.split(":HIST:")[-1]
@@ -84,78 +98,63 @@ def run_audit(current_facts, source_filename):
             
             if old_full_name not in known_migrations:
                 known_migrations[old_full_name] = new_genus
-                if not is_first_run:
-                    msg = f"[MIGRATION MAPPED] {old_full_name} -> {new_genus}"
-                    changes.append(msg)
-                    new_migrations_found += 1
-                    logger.info(f"Detected new migration: {old_full_name}")
+                msg = f"[MIGRATION MAPPED] {old_full_name} -> {new_genus}"
+                logger.warning(msg)
+                report_data['MIGRATIONS'].append(msg)
 
-    # 5. ЗАПИСЬ В ПРОЕКТНУЮ ИСТОРИЮ (Летопись)
+    # 4. ЗАПИСЬ В ПРОЕКТНУЮ ИСТОРИЮ
+    changes_for_history = report_data['NEW'] + report_data['UPDATED'] + report_data['LOST'] + report_data['MIGRATIONS']
+    
     try:
-        # Сессия записывается ВСЕГДА, чтобы подтвердить факт проверки данных
-        add_separator = os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0
-        prefix = "\n" if add_separator else ""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        header = f"{prefix}=== SESSION: {timestamp} | Source: {source_filename} ===\n"
+        add_sep = os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0
+        header = f"{'\n' if add_sep else ''}=== SESSION: {timestamp} | Source: {source_filename} ===\n"
 
         with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
             f.write(header)
-            
             if is_first_run:
-                # Случай 1: Самый первый запуск (Базовая линия)
-                content_line = f"[INITIALIZED] Baseline established. Data seeded for {len(current_facts)} facts.\n"
+                f.write(f"[INITIALIZED] Baseline established. Data seeded for {len(current_facts)} facts.\n")
                 finish_msg = f"Baseline established for {source_filename} ({len(current_facts)} facts)."
-            elif changes:
-                # Случай 2: Найдены изменения
-                for line in changes:
+            elif changes_for_history:
+                for line in changes_for_history:
                     f.write(f"{line}\n")
-                content_line = "" # Изменения уже записаны выше в цикле
-                finish_msg = f"Audit finished: {len(changes)} changes recorded."
+                finish_msg = f"Audit finished: {len(changes_for_history)} changes recorded."
             else:
-                # Случай 3: Изменений нет (Данные проверены и актуальны)
-                content_line = f"[NO CHANGES] Data verified. All {len(current_facts)} facts match the previous session.\n"
-                finish_msg = "Audit finished: No changes detected (Data is up to date)."
+                f.write(f"[NO CHANGES] Data verified. All {len(current_facts)} facts match previous session.\n")
+                finish_msg = "Audit finished: No changes detected."
 
-            if content_line:
-                f.write(content_line)
-        
-        # Вывод информации о сохранении истории
-        history_path_msg = f"Project history updated: {os.path.abspath(HISTORY_FILE)}"
-        print(history_path_msg)
-        logger.info(history_path_msg)
-        
+        print(f"Project history updated: {os.path.abspath(HISTORY_FILE)}")
         print(f"Audit: {finish_msg}")
         logger.info(finish_msg)
-        if changes:
-            for c in changes: logger.info(f"  Change: {c}")
 
     except Exception as e:
-        logger.error(f"Failed to write to project_history.txt: {e}")
+        logger.error(f"Failed to write history: {e}")
 
-    # 6. СОХРАНЕНИЕ ТЕХНИЧЕСКОЙ ПАМЯТИ
+    # 5. ФИНАЛЬНЫЙ АУДИТ-ОТЧЕТ В ЛОГ-ФАЙЛ
+    logger.info("=== FINAL AUDIT DATA REPORT ===")
+    sections = [
+        ('NEW DATA FOUND', report_data['NEW']),
+        ('UPDATED SCIENTIFIC DATA', report_data['UPDATED']),
+        ('LOST DATA (MISSING IN SOURCE)', report_data['LOST']),
+        ('NEW MIGRATION LINKS', report_data['MIGRATIONS'])
+    ]
+    
+    for idx, (title, items) in enumerate(sections, 1):
+        logger.info(f"[{idx}] {title} ({len(items)})")
+        for item in items:
+            logger.info(f"    {item}")
+
+    # 6. СОХРАНЕНИЕ ТЕХНИЧЕСКИХ ФАЙЛОВ
     try:
         with open(snapshot_path, 'w', encoding='utf-8') as f:
             json.dump(current_facts, f, indent=2, ensure_ascii=False)
-        
-        # --- СТАНДАРТНЫЙ ВЫВОД ДЛЯ СНАПШОТА ---
-        snap_path_msg = f"Technical snapshot saved: {os.path.abspath(snapshot_path)}"
-        print(snap_path_msg)
-        logger.info(snap_path_msg)
+        logger.info(f"Data saved to {os.path.abspath(snapshot_path)}")
 
         with open(MIGRATIONS_FILE, 'w', encoding='utf-8') as f:
             json.dump(known_migrations, f, indent=2, ensure_ascii=False)
-        
-        # --- СТАНДАРТНЫЙ ВЫВОД ДЛЯ МИГРАЦИЙ ---
-        mig_path_msg = f"Migration registry updated: {os.path.abspath(MIGRATIONS_FILE)}"
-        print(mig_path_msg)
-        logger.info(mig_path_msg)
-
+        logger.info(f"Data saved to {os.path.abspath(MIGRATIONS_FILE)}")
     except Exception as e:
         logger.error(f"Failed to save technical files: {e}")
 
+    logger.info("--- SCRIPT END: AUDIT_TOOL ---")
     print("Script ended: AUDIT_TOOL")
-    logger.info(f"=== AUDIT SESSION END ===")
-
-if __name__ == "__main__":
-    print("AUDIT TOOL: This script is unable to run independently.")
-    print("Usage: audit_tool.py is automatically called by fetch_dino_details.py. To run it, run fetch_dino_details.py.")

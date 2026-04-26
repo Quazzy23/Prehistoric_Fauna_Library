@@ -1,19 +1,19 @@
-import sys
-sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import json
 import shutil
+import sys
 import logging
 import subprocess
 
 # [1] ПОДГОТОВКА И БЛОКИРОВКА КЭША
+sys.dont_write_bytecode = True
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "migrate_assets.log")
 
-# Настройка логирования: Только в файл, без пустых строк
+# Настройка логирования: Только в файл, по утвержденной структуре
 file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
 logging.basicConfig(
     level=logging.INFO,
@@ -66,10 +66,15 @@ bpy.ops.wm.save_as_mainfile(filepath=bpy.data.filepath)
         logging.error(f"ERROR: Blender API update failed: {e}")
 
 def migrate():
+    # КОНСОЛЬ: СТАРТ
+    print("Starting script: MIGRATE_SPECIES")
+
     MAP_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
     MODELS_ROOT = os.path.join(BASE_DIR, "models")
 
     # СТАРТОВЫЙ ОТЧЕТ В ЛОГ
+    logging.info("--- SCRIPT START: MIGRATE_SPECIES ---")
+    logging.info("Configuration loaded successfully")
     logging.info(f"Opening migration source: {os.path.abspath(MAP_FILE)}")
 
     if not os.path.exists(MAP_FILE):
@@ -87,10 +92,11 @@ def migrate():
 
     total_entries = len(migrations)
     logging.info(f"Detected {total_entries} scientific links")
-    logging.info("--- ASSET MIGRATION STARTED ---")
 
     if total_entries == 0:
         print("Nothing to migrate.")
+        logging.info("Nothing to migrate.")
+        print("Script ended: MIGRATE_SPECIES")
         return
 
     print(f"Checking scientific updates for {total_entries} links...")
@@ -103,65 +109,65 @@ def migrate():
         sys.stdout.write(f"\rProcessing... [{i}/{total_entries}]")
         sys.stdout.flush()
 
+        # Разбор имен
         parts = old_full_name.split(' ', 1)
-        if len(parts) < 2: continue
+        if len(parts) < 2: 
+            logging.warning(f"Invalid name format in JSON: {old_full_name}")
+            continue
         
         old_genus, species = parts[0], parts[1]
         new_full_name = f"{new_genus} {species}"
         
+        # Пути для логов и проверки
         old_p = os.path.join(MODELS_ROOT, old_genus, old_full_name)
         new_genus_dir = os.path.join(MODELS_ROOT, new_genus)
         new_p = os.path.join(new_genus_dir, new_full_name)
-
-        # Пути для логов
         log_old_path = f"models\\{old_genus}\\{old_full_name}"
         log_new_path = f"models\\{new_genus}\\{new_full_name}"
 
-        if os.path.exists(old_p):
-            has_content = any(files for _, _, files in os.walk(old_p))
-            
-            if has_content:
-                logging.info(f"Analyzing: {old_full_name}")
-                logging.info(f"MIGRATED: {old_full_name} -> {new_genus}")
+        # Лаконичный лог по стандарту
+        if os.path.exists(old_p) and any(files for _, _, files in os.walk(old_p)):
+            logging.warning(f"{old_full_name}: MIGRATION REQUIRED (-> {new_genus})")
+            try:
+                os.makedirs(new_genus_dir, exist_ok=True)
+                if os.path.exists(new_p) and new_p != old_p:
+                    shutil.rmtree(new_p)
                 
-                try:
-                    os.makedirs(new_genus_dir, exist_ok=True)
-                    if os.path.exists(new_p) and new_p != old_p:
-                        shutil.rmtree(new_p)
-                    
-                    shutil.move(old_p, new_p)
-                    logging.info(f"MOVED FOLDER: {log_old_path} -> {log_new_path}")
-                    
-                    for filename in os.listdir(new_p):
-                        if old_full_name in filename:
-                            new_filename = filename.replace(old_full_name, new_full_name)
-                            old_file_path = os.path.join(new_p, filename)
-                            new_file_path = os.path.join(new_p, new_filename)
-                            
-                            os.rename(old_file_path, new_file_path)
-                            logging.info(f"RENAMED FILE: {filename} -> {new_filename}")
+                shutil.move(old_p, new_p)
+                logging.info(f"MOVED FOLDER: {log_old_path} -> {log_new_path}")
+                
+                for filename in os.listdir(new_p):
+                    if old_full_name in filename:
+                        new_filename = filename.replace(old_full_name, new_full_name)
+                        old_file_path = os.path.join(new_p, filename)
+                        new_file_path = os.path.join(new_p, new_filename)
+                        
+                        os.rename(old_file_path, new_file_path)
+                        logging.info(f"RENAMED FILE: {filename} -> {new_filename}")
 
-                            if new_filename.endswith("info.txt"):
-                                update_info_content(new_file_path, new_genus, species)
-                            
-                            if new_filename.endswith(".blend"):
-                                update_blender_content(new_file_path, old_full_name, new_full_name)
-                    
-                    logging.info(f"SUCCESS: Migration complete for {new_full_name}")
-                    migrated_count += 1
-                except Exception as e:
-                    logging.error(f"CRITICAL ERROR for {old_full_name}: {e}")
+                        if new_filename.endswith("info.txt"):
+                            update_info_content(new_file_path, new_genus, species)
+                        
+                        if new_filename.endswith(".blend"):
+                            update_blender_content(new_file_path, old_full_name, new_full_name)
+                
+                logging.info(f"{new_full_name}: SUCCESS (Migration complete)")
+                migrated_count += 1
+            except Exception as e:
+                logging.error(f"{old_full_name}: CRITICAL ERROR ({e})")
+        else:
+            # Одна строка на проверенный вид
+            logging.info(f"{old_full_name}: OK")
 
-    # ЗАВЕРШЕНИЕ
+    # ЗАВЕРШЕНИЕ (Консоль + Лог)
     sys.stdout.write("\n")
+    print("Migration completed.")
     print(f"Assets migrated: {migrated_count}")
     
-    final_msg = f"Migration report saved to {os.path.abspath(LOG_FILE)}"
-    print(final_msg)
-    
-    logging.info("--- ASSET MIGRATION FINISHED ---")
+    logging.info("Migration completed successfully.")
     logging.info(f"Total assets migrated: {migrated_count}")
-    logging.info(final_msg)
+    logging.info("--- SCRIPT END: MIGRATE_SPECIES ---")
+    print("Script ended: MIGRATE_SPECIES")
 
 if __name__ == "__main__":
     migrate()

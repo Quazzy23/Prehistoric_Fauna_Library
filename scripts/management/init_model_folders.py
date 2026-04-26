@@ -1,37 +1,40 @@
 import sys
-sys.dont_write_bytecode = True  # Сначала запрещаем
+sys.dont_write_bytecode = True
 import os
 import csv
 import logging
 
-# [2] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
+# [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import metadata_utils
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+MODELS_ROOT = os.path.join(BASE_DIR, "models")
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "init_model_folders.log")
 
-# Логирование: Только в файл
-file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[file_handler]
-)
-
 def create_structure():
-    INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "dinosaurs_for_models.csv")
-    MODELS_ROOT = os.path.join(BASE_DIR, "models")
+    print("Starting script: INIT_MODEL_FOLDERS")
+    
+    INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_for_models.csv")
 
-    # [3] СТАРТОВЫЙ ОТЧЕТ В ЛОГ (Золотой стандарт)
+    # Настройка логирования: Только в файл
+    file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[file_handler]
+    )
+
+    logging.info("--- SCRIPT START: INIT_MODEL_FOLDERS ---")
+    logging.info("Configuration loaded successfully")
     logging.info(f"Opening species source: {os.path.abspath(INPUT_CSV)}")
 
     if not os.path.exists(INPUT_CSV):
-        msg_err = f"Input CSV not found: {INPUT_CSV}"
-        logging.error(msg_err)
-        print(f"[ERROR] {msg_err}")
+        err_msg = f"Input CSV not found: {INPUT_CSV}"
+        logging.error(err_msg)
+        print(f"[ERROR] {err_msg}")
         return
 
     try:
@@ -44,18 +47,11 @@ def create_structure():
 
     total_species = len(rows)
     logging.info(f"Detected {total_species} species")
+    print(f"Total species to process: {total_species}")
 
-    if total_species == 0:
-        print("Total species found: 0")
-        return
-
-    # [4] СТАРТ (Консоль)
-    print(f"Total species found: {total_species}")
-    logging.info(f"--- INITIALIZATION STARTED ---")
-    
     created_count = 0
 
-    # [5] ЦИКЛ ОБРАБОТКИ
+    # [2] ЦИКЛ ОБРАБОТКИ
     for i, row in enumerate(rows, 1):
         # Консольный прогресс-бар
         sys.stdout.write(f"\rProcessing... [{i}/{total_species}]")
@@ -63,47 +59,50 @@ def create_structure():
 
         genus = row['genus'].strip().capitalize()
         species = row['species'].strip().lower()
+        status = row['status'].strip().lower()
+        
         full_name = f"{genus} {species}" if species not in ["-", "", "null"] else genus
 
-        # Формируем путь для лога через \
+        # Пути (Классическая структура: models/Genus/Species)
+        species_abs_path = os.path.join(MODELS_ROOT, genus, full_name)
         log_path_format = f"models\\{genus}\\{full_name}"
-        
-        species_abs_path = os.path.join(BASE_DIR, "models", genus, full_name)
         info_file_path = os.path.join(species_abs_path, f"{full_name} info.txt")
 
-        # Лог 1: Начало анализа вида
-        logging.info(f"Analyzing: {full_name}")
-
         try:
-            is_new_info = False
-            
-            # Создаем структуру папок
-            for sub in ["sources", "textures"]:
+            # Создание структуры папок
+            is_new_dir = False
+            for sub in ["sources", "textures", "skeletal"]:
                 p = os.path.join(species_abs_path, sub)
                 if not os.path.exists(p):
                     os.makedirs(p, exist_ok=True)
+                    is_new_dir = True
 
-            # Создаем info.txt
+            # Создание info.txt
+            is_new_info = False
             if not os.path.exists(info_file_path):
-                template = metadata_utils.get_info_template(genus, species)
+                template = metadata_utils.get_info_template(genus, species, status)
                 with open(info_file_path, 'w', encoding='utf-8') as info_f:
                     info_f.write(template)
                 is_new_info = True
                 created_count += 1
 
-            # Лог 2: Результат по директории
-            msg_dir = "Model directory created on path" if is_new_info else "Model directory verified on path"
-            logging.info(f"{msg_dir}: {log_path_format}")
+            # Лаконичный лог по стандарту
+            if is_new_dir or is_new_info:
+                logging.warning(f"{full_name}: CREATED (Path: {log_path_format})")
+            else:
+                logging.info(f"{full_name}: OK")
 
         except Exception as e:
             logging.error(f"CRITICAL ERROR for {full_name}: {e}")
 
-    # [6] ЗАВЕРШЕНИЕ
+    # [3] ЗАВЕРШЕНИЕ
     sys.stdout.write("\n")
+    print("Initialization completed.")
     print(f"New info files initialized: {created_count}")
     
-    logging.info("--- INITIALIZATION FINISHED ---")
-    logging.info(f"Total new assets initialized: {created_count}")
+    logging.info("Initialization completed successfully.")
+    logging.info("--- SCRIPT END: INIT_MODEL_FOLDERS ---")
+    print("Script ended: INIT_MODEL_FOLDERS")
 
 if __name__ == "__main__":
     create_structure()
