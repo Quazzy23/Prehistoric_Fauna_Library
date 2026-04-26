@@ -3,6 +3,7 @@ sys.dont_write_bytecode = True  # Сначала запрещаем
 import os
 import logging
 import metadata_utils
+import time
 
 # [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -70,6 +71,7 @@ def upgrade_files():
     for i, target in enumerate(all_info_files, 1):
         # Консольный прогресс-бар
         sys.stdout.write(f"\rProcessing... [{i}/{total_files}]")
+        time.sleep(0.0001)
         sys.stdout.flush()
 
         target_file = target['path']

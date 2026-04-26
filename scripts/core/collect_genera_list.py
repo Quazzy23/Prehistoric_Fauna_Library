@@ -9,11 +9,12 @@ import csv
 # Добавляем путь к папке scripts, чтобы увидеть config.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import local_settings
 sys.dont_write_bytecode = True
 
 # --- ПУТИ И НАСТРОЙКИ ---
 WIKI_LIST_URL = config.WIKI_LIST_URL
-USER_EMAIL = config.USER_EMAIL
+USER_EMAIL = local_settings.USER_EMAIL
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 # Новый путь для CSV

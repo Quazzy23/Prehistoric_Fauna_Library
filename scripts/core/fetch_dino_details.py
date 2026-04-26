@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 # Добавляем путь к папке scripts, чтобы увидеть config.py
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+import local_settings
 import audit_tool
 
 # --- ПУТИ И НАСТРОЙКИ ---
@@ -52,7 +53,7 @@ logging.basicConfig(
 )
 
 BASE_WIKI_URL = config.BASE_WIKI_URL
-USER_EMAIL = config.USER_EMAIL
+USER_EMAIL = local_settings.USER_EMAIL
 HEADERS = {'User-Agent': f'PrehistoricFaunaLibrary/1.0 (mailto:{USER_EMAIL})'}
 EXCLUDE_UNCERTAIN_STAGES = config.EXCLUDE_UNCERTAIN_STAGES
 FETCH_SYNONYMS = config.FETCH_SYNONYMS

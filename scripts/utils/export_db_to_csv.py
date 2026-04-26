@@ -4,6 +4,7 @@ import sqlite3
 import csv
 import os
 import logging
+import time
 
 # [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -65,14 +66,23 @@ def export_dinosaurs_to_csv():
             logging.info("Filter disabled or file missing. Loading full database.")
         
         rows = cursor.fetchall()
-        logging.info(f"Detected {len(rows)} species records")
+        total_rows = len(rows)
+        logging.info(f"Detected {total_rows} species records")
         
         # [3] ЗАПИСЬ CSV
         os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
         with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f, delimiter=';')
             writer.writerow(['genus', 'species', 'status']) # Заголовок
-            writer.writerows(rows)
+            
+            for i, row in enumerate(rows, 1):
+                writer.writerow(row)
+                # Счетчик в консоль
+                sys.stdout.write(f"\rExporting... [{i}/{total_rows}]")
+                sys.stdout.flush()
+                time.sleep(0.0001)
+        
+        print() # Перенос строки после завершения счетчика
             
         # [4] ЗАВЕРШЕНИЕ (Консоль + Лог)
         logging.info("Export completed successfully.")

@@ -3,6 +3,7 @@ sys.dont_write_bytecode = True
 import os
 import csv
 import logging
+import time
 
 # [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,6 +56,7 @@ def create_structure():
     for i, row in enumerate(rows, 1):
         # Консольный прогресс-бар
         sys.stdout.write(f"\rProcessing... [{i}/{total_species}]")
+        time.sleep(0.0005)
         sys.stdout.flush()
 
         genus = row['genus'].strip().capitalize()
