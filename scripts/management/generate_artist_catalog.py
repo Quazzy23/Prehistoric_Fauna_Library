@@ -3,6 +3,7 @@ sys.dont_write_bytecode = True
 import os
 import json
 import logging
+import time
 
 # [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -65,6 +66,7 @@ def generate_catalog():
     # [3] ЦИКЛ ПАРСИНГА
     for i, file_path in enumerate(all_info_files, 1):
         sys.stdout.write(f"\rScanning... [{i}/{total_files}]")
+        time.sleep(0.0001)
         sys.stdout.flush()
 
         data = {}

@@ -1,7 +1,5 @@
 import sys
 sys.dont_write_bytecode = True
-import json
-import os
 
 def get_info_template(genus, species, scientific_status="empty", data=None):
     """
@@ -50,17 +48,3 @@ def get_info_template(genus, species, scientific_status="empty", data=None):
         f"notes: {v('notes')}\n"
     )
     return template
-
-
-def get_user_email(default_email):
-    """Подтягивает email из user_settings.json, если он есть."""
-    # Путь к настройкам относительно этого файла
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_settings.json")
-    if os.path.exists(path):
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("user_email", default_email)
-        except Exception:
-            return default_email
-    return default_email

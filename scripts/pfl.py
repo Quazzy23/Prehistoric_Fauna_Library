@@ -2,6 +2,7 @@ import sys
 sys.dont_write_bytecode = True
 import os
 import json
+import local_settings
 
 # [1] ПОДГОТОВКА ПУТЕЙ
 # Скрипт в /scripts/, поэтому корень на один уровень выше
@@ -10,16 +11,11 @@ CATALOG_PATH = os.path.join(BASE_DIR, "data", "exports", "species_catalog.json")
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "user_settings.json")
 
 def load_settings():
-    """Загружает профиль пользователя из user_settings.json."""
-    if not os.path.exists(SETTINGS_PATH):
-        # Если настроек нет, используем гостевой профиль
-        return {"artist_name": "Guest", "user_email": "placeholder@example.com"}
-    try:
-        with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[ERROR] Failed to read settings: {e}")
-        return None
+    """Загружает профиль пользователя из local_settings.py."""
+    return {
+        "artist_name": local_settings.ARTIST_NAME,
+        "user_email": local_settings.USER_EMAIL
+    }
 
 def load_catalog():
     """Загружает меню видов из компактного JSON."""
@@ -66,12 +62,10 @@ def check_species():
         print(f"\n{icon} {item['genus']} {item['species']}")
         print(f"   Scientific Status: {item['status']}")
         print(f"   Model Status:      {item['m_status'].upper()}")
-        print(f"   Next Stage:        {item['stage'].upper()}")
+        print(f"   Stage:             {item['stage'].upper()}")
         
         if item['user']:
-            print(f"   Artist:            @{item['user']}")
-        else:
-            print(f"   Artist:            (None - FREE)")
+            print(f"   Artist:            {item['user']}")
 
     print("\n" + "="*45)
 
