@@ -36,7 +36,7 @@ def run_setup():
 
     # Дефолтные значения (Заглушки для новых пользователей)
     defaults = {
-        "USER_EMAIL": '"Volk@.ru"',
+        "USER_EMAIL": '"udot@.dot"',
         "ARTIST_NAME": '"YourNickname"',
         "BLENDER_PATH": r"r'C:\Program Files\Blender Foundation\Blender 4.0\blender.exe'"
     }
