@@ -15,11 +15,15 @@ OUTPUT_JSON = os.path.join(BASE_DIR, "data", "exports", "species_catalog.json")
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "generate_catalog.log")
 
 def get_production_stage(data):
-    """Определяет текущую стадию на основе заполненности полей."""
+    """
+    Проверяет цепочку: skeletal -> mesh -> texture -> rig.
+    Стадия считается пройденной, если есть и автор, и approved_by.
+    """
     stages = ["skeletal", "mesh", "texture", "rig"]
     for s in stages:
-        author = data.get(s, "")
-        approved = data.get(f"{s}_approved_by", "")
+        author = data.get(s, "").strip()
+        approved = data.get(f"{s}_approved_by", "").strip()
+        # Если автор не указан ИЛИ нет аппрува — это текущая стадия
         if not author or not approved:
             return s
     return "finished"
@@ -84,29 +88,30 @@ def generate_catalog():
             stage = get_production_stage(data)
             
             claimed_by = data.get('claimed_by', '')
-            display_claimed_by = "" if m_status.lower() == 'review' else claimed_by
+
+            # Флаг: одобрен ли текущий этап (есть ли запись в *_approved_by)
+            is_approved = bool(data.get(f"{stage}_approved_by", "").strip())
 
             catalog.append({
                 "genus": genus,
                 "species": species,
-                "status": sci_status,   # Коротко: статус науки
-                "m_status": m_status,   # Коротко: статус модели
-                "stage": stage,         # Коротко: стадия
-                "user": display_claimed_by # Коротко: кто занял
+                "status": sci_status,
+                "m_status": m_status,
+                "stage": stage,
+                "is_approved": is_approved,
+                "user": claimed_by # Всегда передаем ник
             })
             logging.info(f"{genus} {species} | {m_status} | {stage}")
 
         except Exception as e:
             logging.error(f"ERROR parsing {file_path}: {e}")
 
-    # [4] ЗАПИСЬ
+    # [4] ЗАПИСЬ (Компактный формат: одна строка = один динозавр)
     try:
         with open(OUTPUT_JSON, 'w', encoding='utf-8') as jf:
             jf.write("[\n")
             for i, entry in enumerate(catalog):
-                # Превращаем один словарь в одну строку
                 line = json.dumps(entry, ensure_ascii=False)
-                # Добавляем запятую всем, кроме последнего
                 comma = "," if i < len(catalog) - 1 else ""
                 jf.write(f"    {line}{comma}\n")
             jf.write("]")

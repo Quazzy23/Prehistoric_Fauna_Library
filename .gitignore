@@ -21,3 +21,6 @@ data/project_history.txt
 
 # Отдельно игнорируем финальные файлы, пока их корректность не утсверждена на 100%
 data/exports/*.json
+
+# Временные скрипты для разработки
+scripts/utils/reset_assets.py
