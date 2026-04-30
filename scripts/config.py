@@ -49,6 +49,13 @@ TABLE_TAXONOMY = "taxonomy"        # Иерархия классификации
 TABLE_GEOLOGY  = "geological_time" # Геохронологический справочник
 
 
+# [5.1] ПУТИ К РЕЕСТРАМ (JSON)
+# Основной каталог — единственный источник истины для производства
+MASTER_CATALOG = os.path.join("data", "exports", "species_catalog.json")
+# Реестр удаленных видов (архив для "эффекта Феникса")
+DELETED_REGISTRY = os.path.join("data", "exports", "deleted_registry.json")
+
+
 # [6] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (INTERNAL)
 # Веса валидности для разрешения конфликтов. Чем меньше число, тем важнее статус.
 STATUS_WEIGHTS = {

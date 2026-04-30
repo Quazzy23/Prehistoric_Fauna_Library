@@ -30,14 +30,16 @@ def run_setup():
         ("# Use it to configure your identity and local machine paths.", None),
         ("", None),
         ("# Your contact email for Wikipedia (helps avoid IP blocks)", "USER_EMAIL"),
-        ("# Your nickname for production credits and 'claimed_by' field", "ARTIST_NAME"),
+        ("# Your nickname for production credits and 'claimed_by' field", "USER_NAME"),
+        ("# List of authorized curators who can approve stages", "CURATORS"),
         ("# Full path to your Blender executable (e.g. C:\\Program Files\\...\\blender.exe)", "BLENDER_PATH"),
     ]
 
     # Дефолтные значения (Заглушки для новых пользователей)
     defaults = {
         "USER_EMAIL": '"udot@.dot"',
-        "ARTIST_NAME": '"YourNickname"',
+        "USER_NAME": '"YourNickname"',
+        "CURATORS": '["Quazzy", "Warpath"]',
         "BLENDER_PATH": r"r'C:\Program Files\Blender Foundation\Blender 4.0\blender.exe'"
     }
 

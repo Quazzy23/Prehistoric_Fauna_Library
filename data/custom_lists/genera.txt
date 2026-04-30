@@ -1,6 +1,7 @@
 Thecodontosaurus
 Torosaurus
 Agrosaurus
+Aardonyx
 Diplodocus
 Dilong
 Barilium

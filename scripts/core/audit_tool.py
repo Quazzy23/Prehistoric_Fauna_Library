@@ -10,6 +10,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "data", "exports", "snapshots")
 HISTORY_FILE = os.path.join(BASE_DIR, "data", "project_history.txt")
 MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
+DELETED_REGISTRY = os.path.join(BASE_DIR, "data", "exports", "deleted_registry.json")
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "audit_tool.log")
 
 # Настройка лога (Золотой Стандарт)
@@ -50,6 +51,14 @@ def run_audit(current_facts, source_filename):
         except Exception as e:
             logger.error(f"Failed to load migrations file: {e}")
 
+    deleted_registry = {}
+    if os.path.exists(DELETED_REGISTRY):
+        try:
+            with open(DELETED_REGISTRY, 'r', encoding='utf-8') as f:
+                deleted_registry = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to load deleted registry: {e}")
+
     # Списки для итогового отчета
     report_data = {
         'NEW': [],
@@ -76,13 +85,44 @@ def run_audit(current_facts, source_filename):
             continue
 
         if old_val is None and new_val is not None:
-            msg = f"[NEW] {key}: {new_val}"
-            logger.warning(msg)
-            report_data['NEW'].append(msg)
+            # Проверяем, не является ли этот "новый" вид воскресшим из архива
+            is_resurrected = False
+            if ":DATA:" not in key and key.count(":") >= 2:
+                parts = key.split(":")
+                clean_name = f"{parts[0].capitalize()} {parts[2].lower()}"
+                
+                if clean_name in deleted_registry:
+                    msg = f"[RESURRECTED] {clean_name} (Was lost on {deleted_registry[clean_name]['deleted_at']})"
+                    logger.warning(msg)
+                    report_data['NEW'].append(msg)
+                    is_resurrected = True
+                    # Удаляем из "черного списка", так как он снова в строю
+                    del deleted_registry[clean_name]
+            
+            if not is_resurrected:
+                msg = f"[NEW] {key}: {new_val}"
+                logger.warning(msg)
+                report_data['NEW'].append(msg)
         elif old_val is not None and new_val is None:
             msg = f"[LOST] {key}: {old_val}"
             logger.warning(msg)
             report_data['LOST'].append(msg)
+
+            # [ЭФФЕКТ ФЕНИКСА] Запись в реестр удаленных
+            # Игнорируем DATA, берем только виды (:MAIN: или :SYNONYM:)
+            if ":DATA:" not in key and key.count(":") >= 2:
+                parts = key.split(":")
+                # Формат: "Род вид"
+                genus = parts[0].capitalize()
+                species = parts[2].lower()
+                clean_name = f"{genus} {species}"
+                
+                # Записываем данные в ту переменную, которую скрипт сохранит в конце!
+                deleted_registry[clean_name] = {
+                    "last_status": str(old_val),
+                    "deleted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
         elif old_val != new_val:
             msg = f"[UPDATED] {key}: {old_val} -> {new_val}"
             logger.warning(msg)
@@ -130,7 +170,31 @@ def run_audit(current_facts, source_filename):
     except Exception as e:
         logger.error(f"Failed to write history: {e}")
 
-    # 5. ФИНАЛЬНЫЙ АУДИТ-ОТЧЕТ В ЛОГ-ФАЙЛ
+    # 5. СОХРАНЕНИЕ ТЕХНИЧЕСКИХ ФАЙЛОВ
+    try:
+        with open(snapshot_path, 'w', encoding='utf-8') as f:
+            json.dump(current_facts, f, indent=2, ensure_ascii=False)
+        logger.info(f"Data saved to {os.path.abspath(snapshot_path)}")
+
+        with open(MIGRATIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(known_migrations, f, indent=2, ensure_ascii=False)
+        logger.info(f"Data saved to {os.path.abspath(MIGRATIONS_FILE)}")
+
+        # Сохранение реестра удаленных
+        if deleted_registry:
+            with open(DELETED_REGISTRY, 'w', encoding='utf-8') as f:
+                json.dump(deleted_registry, f, indent=2, ensure_ascii=False)
+            logger.info(f"Updated registry saved to {os.path.abspath(DELETED_REGISTRY)}")
+        else:
+            # Если данных нет — удаляем файл, чтобы он не висел пустым
+            if os.path.exists(DELETED_REGISTRY):
+                os.remove(DELETED_REGISTRY)
+                logger.info("Deleted registry file removed (empty).")
+                
+    except Exception as e:
+        logger.error(f"Failed to save technical files: {e}")
+
+    # 6. ФИНАЛЬНЫЙ АУДИТ-ОТЧЕТ В ЛОГ-ФАЙЛ (Теперь в самом конце)
     logger.info("=== FINAL AUDIT DATA REPORT ===")
     sections = [
         ('NEW DATA FOUND', report_data['NEW']),
@@ -143,18 +207,6 @@ def run_audit(current_facts, source_filename):
         logger.info(f"[{idx}] {title} ({len(items)})")
         for item in items:
             logger.info(f"    {item}")
-
-    # 6. СОХРАНЕНИЕ ТЕХНИЧЕСКИХ ФАЙЛОВ
-    try:
-        with open(snapshot_path, 'w', encoding='utf-8') as f:
-            json.dump(current_facts, f, indent=2, ensure_ascii=False)
-        logger.info(f"Data saved to {os.path.abspath(snapshot_path)}")
-
-        with open(MIGRATIONS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(known_migrations, f, indent=2, ensure_ascii=False)
-        logger.info(f"Data saved to {os.path.abspath(MIGRATIONS_FILE)}")
-    except Exception as e:
-        logger.error(f"Failed to save technical files: {e}")
 
     logger.info("--- SCRIPT END: AUDIT_TOOL ---")
     print("Script ended: AUDIT_TOOL")

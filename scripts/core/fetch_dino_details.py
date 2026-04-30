@@ -803,7 +803,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
                                 fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
                                 with data_lock:
-                                    current_session_facts[f"{genus}:MAIN:{info['species']}"] = fact_val
+                                    current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
                                 # ------------------------------
                                 audit_buffer.append({'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'], 'meta_note': current_meta_note})
                                 check_and_report_historical(item, true_genus, reports)
@@ -812,7 +812,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
                                 fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
                                 with data_lock:
-                                    current_session_facts[f"{genus}:MAIN:{info['species']}"] = fact_val
+                                    current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
                                 # ------------------------------
                                 audit_buffer.append({
                                     'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'],
@@ -853,7 +853,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                             # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
                                             fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
                                             with data_lock:
-                                                current_session_facts[f"{genus}:SYNONYM:{s_species}"] = fact_val
+                                                current_session_facts[f"{s_info['genus']}:SYNONYM:{s_species}"] = fact_val
                                             # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
@@ -864,7 +864,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                             # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
                                             fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
                                             with data_lock:
-                                                current_session_facts[f"{genus}:SYNONYM:{s_species}"] = fact_val
+                                                current_session_facts[f"{s_info['genus']}:SYNONYM:{s_species}"] = fact_val
                                             # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,

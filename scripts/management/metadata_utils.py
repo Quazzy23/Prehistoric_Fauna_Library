@@ -12,7 +12,7 @@ def get_info_template(genus, species, scientific_status="empty", data=None):
         # Ищем значение в разных вариантах написания (для совместимости)
         val = data.get(key)
         if val is None and key == 'mesh': val = data.get('model')
-        if val is None and key == 'model_status': val = data.get('status') # старый маппинг
+        if val is None and key == 'model_status': val = data.get('m_status') if data.get('m_status') else data.get('status')
         
         if val in ["-", "None", None, "", "free"]: # "free" чистим, чтобы подставить дефолт ниже
             return ""

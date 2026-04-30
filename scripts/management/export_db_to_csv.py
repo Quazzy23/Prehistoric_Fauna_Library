@@ -12,7 +12,7 @@ import config
 
 def export_dinosaurs_to_csv():
     # --- НАСТРОЙКИ ТЕСТА ---
-    USE_FILTER = True  
+    USE_FILTER = False  
     FILTER_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "custom_lists", "export_filter.txt")
     # -----------------------
 

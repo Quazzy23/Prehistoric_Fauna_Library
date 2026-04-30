@@ -8,9 +8,6 @@ __pycache__/
 # Настройки пользователя
 scripts/local_settings.py
 
-# --- Временные файлы и черновики ---
-Bbront.txt
-
 # Игнорируем базу данных
 database/
 
@@ -22,5 +19,10 @@ data/project_history.txt
 # Отдельно игнорируем финальные файлы, пока их корректность не утсверждена на 100%
 data/exports/*.json
 
-# Временные скрипты для разработки
-scripts/utils/reset_assets.py
+# Скрипты и кастомные листы для тестирования
+scripts/utils/
+data/custom_lists/*
+!data/custom_lists/genera.txt
+
+# Заметки
+notes/
