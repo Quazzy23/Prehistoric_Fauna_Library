@@ -36,12 +36,13 @@ except ImportError:
 SCRIPTS_DIR = os.path.join(BASE_DIR, "core")
 
 PIPELINE = [
-    "collect_genera_list.py",      # 1. Собираем список родов и их статусы
-    "fetch_geochronology.py",      # 2. Скачиваем шкалу времени (ICS)
-    "fetch_dino_details.py",       # 3. Парсим страницы динозавров (виды)
-    "validate_species_status.py",  # 4. Сверяем статусы видов с genera_list
-    "sync_dino_stages.py",         # 5. Сопоставляем миллионы лет с ярусами
-    "build_database.py"            # 6. Заливаем всё в SQLite
+    "collect_genera_list.py",      # 1. Список родов
+    "fetch_geochronology.py",      # 2. Шкала ICS
+    "fetch_dino_details.py",       # 3. Парсинг Википедии
+    "validate_species_status.py",  # 4. Валидация статусов
+    "sync_dino_stages.py",         # 5. Синхронизация времени
+    "audit_tool.py",               # 6. ФИНАЛЬНЫЙ ИНСПЕКТОР (Новое место)
+    "build_database.py"            # 7. Заливка в SQLite
 ]
 
 def run_script(script_name):
@@ -71,6 +72,8 @@ def run_script(script_name):
 def main():
     logging.info("--- SCRIPT START: MAIN_PIPELINE (v4.0) ---")
     print("Starting script: MAIN_PIPELINE")
+    if not config.BRIEF_CONSOLE:
+        print()
 
     start_time = datetime.now()
     success_count = 0
@@ -79,7 +82,9 @@ def main():
         # Запускаем очередной скрипт из цепочки
         if run_script(script):
             success_count += 1
-            print()  # <--- ДОБАВЬ ЭТУ СТРОКУ (Пустая строка ТОЛЬКО при работе в main)
+            # Разделитель строк нужен только в полном режиме
+            if not config.BRIEF_CONSOLE:
+                print()
         else:
             print(f"\n[CRITICAL ERROR] Pipeline stopped at {script}")
             logging.critical(f"Pipeline stopped at {script}")

@@ -1,212 +1,182 @@
 import sys
 sys.dont_write_bytecode = True
 import os
+# Добавляем путь к папке scripts, чтобы увидеть config.py
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import csv
 import json
 import logging
+import config
 from datetime import datetime
 
 # --- ПУТИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+FINAL_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_final.csv")
 SNAPSHOT_DIR = os.path.join(BASE_DIR, "data", "exports", "snapshots")
-HISTORY_FILE = os.path.join(BASE_DIR, "data", "project_history.txt")
+HISTORY_FILE = os.path.join(BASE_DIR, "project_history.txt")
 MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
 DELETED_REGISTRY = os.path.join(BASE_DIR, "data", "exports", "deleted_registry.json")
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "audit_tool.log")
 
-# Настройка лога (Золотой Стандарт)
+# Настройка лога
 logger = logging.getLogger("audit_tool")
 logger.setLevel(logging.INFO)
-logger.propagate = False # <--- ЭТА СТРОКА ОСТАНОВИТ ДУБЛИРОВАНИЕ
 if logger.hasHandlers(): logger.handlers.clear()
 handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
 handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 logger.addHandler(handler)
 
-def run_audit(current_facts, source_filename):
-    """Глубокий аудит данных с полной детализацией и итоговыми списками."""
-    print("\nStarting script: AUDIT_TOOL")
+def load_json(path):
+    if os.path.exists(path):
+        with open(path, 'r', encoding='utf-8') as f:
+            try: return json.load(f)
+            except: return {}
+    return {}
+
+def run_final_audit():
+    if config.BRIEF_CONSOLE:
+        print("AUDIT_TOOL...", end=" ", flush=True)
+    else:
+        print("Starting script: AUDIT_TOOL (Final Inspector)")
+    
     logger.info("--- SCRIPT START: AUDIT_TOOL ---")
+
+    if not os.path.exists(FINAL_CSV):
+        err = f"Final CSV not found: {FINAL_CSV}"
+        logger.error(err)
+        print(f"[ERROR] {err}")
+        return
+
+    # 1. ЗАГРУЗКА ДАННЫХ
+    snapshot_path = os.path.join(SNAPSHOT_DIR, f"{config.CUSTOM_LIST_NAME.split('.')[0]}.json")
+    old_facts = load_json(snapshot_path)
+    migrations = load_json(MIGRATIONS_FILE)
+    deleted_registry = load_json(DELETED_REGISTRY)
     
-    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-    # Убираем .csv из имени (например, genera_list.csv -> genera_list)
-    clean_name = source_filename.split('.')[0]
-    snapshot_path = os.path.join(SNAPSHOT_DIR, f"{clean_name}.json")
-    
-    # 1. Загрузка данных
-    old_facts = {}
-    is_first_run = not os.path.exists(snapshot_path)
-    if not is_first_run:
-        try:
-            with open(snapshot_path, 'r', encoding='utf-8') as f:
-                old_facts = json.load(f)
-            logger.info(f"Loaded technical snapshot: {os.path.abspath(snapshot_path)}")
-        except Exception as e:
-            logger.error(f"Failed to load snapshot: {e}")
+    report = {'NEW': [], 'UPDATED': [], 'LOST': [], 'MIGRATED': [], 'RESURRECTED': []}
+    current_facts = {}
+    seen_in_this_session = set()
+    handled_data_keys_in_this_run = set()
 
-    known_migrations = {}
-    if os.path.exists(MIGRATIONS_FILE):
-        try:
-            with open(MIGRATIONS_FILE, 'r', encoding='utf-8') as f:
-                known_migrations = json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load migrations file: {e}")
-
-    deleted_registry = {}
-    if os.path.exists(DELETED_REGISTRY):
-        try:
-            with open(DELETED_REGISTRY, 'r', encoding='utf-8') as f:
-                deleted_registry = json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load deleted registry: {e}")
-
-    # Списки для итогового отчета
-    report_data = {
-        'NEW': [],
-        'UPDATED': [],
-        'LOST': [],
-        'MIGRATIONS': []
-    }
-    
-    status_msg = f"Analyzing {len(current_facts)} currently extracted facts..."
-    print(f"Audit: {status_msg}")
-    logger.info(status_msg)
-
-    # 2. СРАВНЕНИЕ (Основной цикл)
-    all_keys = sorted(list(set(old_facts.keys()) | set(current_facts.keys())))
-    
-    for key in all_keys:
-        if ":HIST:" in key: continue # Обработка миграций ниже
-
-        old_val = old_facts.get(key)
-        new_val = current_facts.get(key)
-
-        if is_first_run:
-            logger.info(f"[OK] {key}: {new_val}")
-            continue
-
-        if old_val is None and new_val is not None:
-            # Проверяем, не является ли этот "новый" вид воскресшим из архива
-            is_resurrected = False
-            if ":DATA:" not in key and key.count(":") >= 2:
-                parts = key.split(":")
-                clean_name = f"{parts[0].capitalize()} {parts[2].lower()}"
-                
-                if clean_name in deleted_registry:
-                    msg = f"[RESURRECTED] {clean_name} (Was lost on {deleted_registry[clean_name]['deleted_at']})"
-                    logger.warning(msg)
-                    report_data['NEW'].append(msg)
-                    is_resurrected = True
-                    # Удаляем из "черного списка", так как он снова в строю
-                    del deleted_registry[clean_name]
+    # 2. ПОСЛЕДОВАТЕЛЬНОЕ СРАВНЕНИЕ (Строго по порядку CSV)
+    with open(FINAL_CSV, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f, delimiter=';')
+        for row in reader:
+            g, s = row['genus'], row['species']
+            page = row['source_genus'] # С какой страницы взята инфа (напр. Efraasia)
             
-            if not is_resurrected:
-                msg = f"[NEW] {key}: {new_val}"
-                logger.warning(msg)
-                report_data['NEW'].append(msg)
-        elif old_val is not None and new_val is None:
-            msg = f"[LOST] {key}: {old_val}"
-            logger.warning(msg)
-            report_data['LOST'].append(msg)
-
-            # [ЭФФЕКТ ФЕНИКСА] Запись в реестр удаленных
-            # Игнорируем DATA, берем только виды (:MAIN: или :SYNONYM:)
-            if ":DATA:" not in key and key.count(":") >= 2:
-                parts = key.split(":")
-                # Формат: "Род вид"
-                genus = parts[0].capitalize()
-                species = parts[2].lower()
-                clean_name = f"{genus} {species}"
-                
-                # Записываем данные в ту переменную, которую скрипт сохранит в конце!
-                deleted_registry[clean_name] = {
-                    "last_status": str(old_val),
-                    "deleted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                
-        elif old_val != new_val:
-            msg = f"[UPDATED] {key}: {old_val} -> {new_val}"
-            logger.warning(msg)
-            report_data['UPDATED'].append(msg)
-        else:
-            logger.info(f"[OK] {key}: {new_val}")
-
-    # 3. ОБРАБОТКА МИГРАЦИЙ
-    for key, val in current_facts.items():
-        if ":HIST:" in key:
-            old_full_name = key.split(":HIST:")[-1]
-            new_genus = key.split(":")[0]
+            # --- А) ОБРАБОТКА ДАННЫХ СТРАНИЦЫ (DATA:Page) ---
+            # Теперь ключ привязан к ИСТОЧНИКУ, а не к роду вида. Это лечит Текодонтозавра.
+            data_key = f"DATA:{page}"
+            data_val = f"{row['clade']} | {row['age']} | {row['stage']}"
+            current_facts[data_key] = data_val
             
-            if old_full_name not in known_migrations:
-                known_migrations[old_full_name] = new_genus
-                msg = f"[MIGRATION MAPPED] {old_full_name} -> {new_genus}"
-                logger.warning(msg)
-                report_data['MIGRATIONS'].append(msg)
+            if data_key not in handled_data_keys_in_this_run:
+                old_d_v = old_facts.get(data_key)
+                if old_d_v == data_val:
+                    logger.info(f"[OK] {data_key}: {data_val}")
+                elif old_d_v is None:
+                    msg = f"[NEW] {data_key}: {data_val}"
+                    report['NEW'].append(msg); logger.warning(msg)
+                else:
+                    msg = f"[UPDATED] {data_key}: {old_d_v} -> {data_val}"
+                    report['UPDATED'].append(msg); logger.warning(msg)
+                
+                seen_in_this_session.add(data_key)
+                handled_data_keys_in_this_run.add(data_key)
+
+            # --- Б) ОБРАБОТКА ВИДА (SPECIES:Genus:Species) ---
+            s_key = f"SPECIES:{g}:{s}"
+            s_val = f"{row['status']} | {row['is_type']} | {row['author']} | {row['year']}"
+            current_facts[s_key] = s_val
+            seen_in_this_session.add(s_key)
+            
+            old_s_v = old_facts.get(s_key)
+            full_name = f"{g} {s}"
+
+            if old_s_v == s_val:
+                logger.info(f"[OK] {s_key}: {s_val}")
+            elif old_s_v is not None:
+                msg = f"[UPDATED] {s_key}: {old_s_v} -> {s_val}"
+                report['UPDATED'].append(msg); logger.warning(msg)
+            else:
+                # NEW или RESURRECTED
+                is_res = False
+                if full_name in deleted_registry:
+                    msg = f"[RESURRECTED] {full_name}: {s_val}"
+                    report['RESURRECTED'].append(msg); logger.warning(msg)
+                    del deleted_registry[full_name]; is_res = True
+                
+                if not is_res:
+                    msg = f"[NEW] {s_key}: {s_val}"
+                    report['NEW'].append(msg); logger.warning(msg)
+
+    # 3. ОБРАБОТКА ПРОПАВШИХ (Те, кто был в памяти, но не встретился в CSV)
+    all_old_keys = set(old_facts.keys())
+    lost_keys = sorted(list(all_old_keys - seen_in_this_session))
+
+    for l_key in lost_keys:
+        old_v = old_facts[l_key]
+        
+        is_mig = False
+        if l_key.startswith("SPECIES:"):
+            parts = l_key.split(":")
+            old_full_name = f"{parts[1]} {parts[2]}"
+            if old_full_name in migrations:
+                new_gen = migrations[old_full_name]
+                target_k = f"SPECIES:{new_gen}:{parts[2]}"
+                if target_k in seen_in_this_session:
+                    msg = f"[MIGRATED] {old_full_name} -> {new_gen} {parts[2]}"
+                    report['MIGRATED'].append(msg); logger.warning(msg)
+                    is_mig = True
+        
+        if not is_mig:
+            msg = f"[LOST] {l_key}: {old_v}"
+            report['LOST'].append(msg); logger.warning(msg)
+            if l_key.startswith("SPECIES:"):
+                p = l_key.split(":")
+                deleted_registry[f"{p[1]} {p[2]}"] = {"deleted_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
     # 4. ЗАПИСЬ В ПРОЕКТНУЮ ИСТОРИЮ
-    changes_for_history = report_data['NEW'] + report_data['UPDATED'] + report_data['LOST'] + report_data['MIGRATIONS']
+    all_changes = report['NEW'] + report['UPDATED'] + report['LOST'] + report['MIGRATED'] + report['RESURRECTED']
     
-    try:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        add_sep = os.path.exists(HISTORY_FILE) and os.path.getsize(HISTORY_FILE) > 0
-        header = f"{'\n' if add_sep else ''}=== SESSION: {timestamp} | Source: {source_filename} ===\n"
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = f"\n=== SESSION: {ts} | Source: {config.CUSTOM_LIST_NAME} ===\n"
 
+    if not old_facts:
+        # ПЕРВЫЙ ЗАПУСК: Пишем только Baseline
         with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
             f.write(header)
-            if is_first_run:
-                f.write(f"[INITIALIZED] Baseline established. Data seeded for {len(current_facts)} facts.\n")
-                finish_msg = f"Baseline established for {source_filename} ({len(current_facts)} facts)."
-            elif changes_for_history:
-                for line in changes_for_history:
-                    f.write(f"{line}\n")
-                finish_msg = f"Audit finished: {len(changes_for_history)} changes recorded."
-            else:
-                f.write(f"[NO CHANGES] Data verified. All {len(current_facts)} facts match previous session.\n")
-                finish_msg = "Audit finished: No changes detected."
-
-        print(f"Project history updated: {os.path.abspath(HISTORY_FILE)}")
-        print(f"Audit: {finish_msg}")
-        logger.info(finish_msg)
-
-    except Exception as e:
-        logger.error(f"Failed to write history: {e}")
+            f.write("[INITIALIZED] Baseline established.\n")
+    elif all_changes:
+        # ПОСЛЕДУЮЩИЕ ЗАПУСКИ: Пишем только если есть изменения
+        with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
+            f.write(header)
+            for line in sorted(all_changes):
+                f.write(f"{line}\n")
 
     # 5. СОХРАНЕНИЕ ТЕХНИЧЕСКИХ ФАЙЛОВ
-    try:
-        with open(snapshot_path, 'w', encoding='utf-8') as f:
-            json.dump(current_facts, f, indent=2, ensure_ascii=False)
-        logger.info(f"Data saved to {os.path.abspath(snapshot_path)}")
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+    with open(snapshot_path, 'w', encoding='utf-8') as f: json.dump(current_facts, f, indent=2, ensure_ascii=False)
+    if deleted_registry:
+        with open(DELETED_REGISTRY, 'w', encoding='utf-8') as f: json.dump(deleted_registry, f, indent=2, ensure_ascii=False)
+    elif os.path.exists(DELETED_REGISTRY):
+        os.remove(DELETED_REGISTRY)
 
-        with open(MIGRATIONS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(known_migrations, f, indent=2, ensure_ascii=False)
-        logger.info(f"Data saved to {os.path.abspath(MIGRATIONS_FILE)}")
+    # 6. ФИНАЛЬНЫЙ АУДИТ-ОТЧЕТ В ЛОГ-ФАЙЛ
+    logger.info("=== FINAL AUDIT REPORT ===")
+    sections = [('NEW', report['NEW']), ('UPDATED', report['UPDATED']), ('LOST', report['LOST']), ('MIGRATION LINKS', report['MIGRATED']), ('RESURRECTED', report['RESURRECTED'])]
+    for title, items in sections:
+        logger.info(f"[{title}] ({len(items)})")
+        for item in items: logger.info(f"    {item}")
 
-        # Сохранение реестра удаленных
-        if deleted_registry:
-            with open(DELETED_REGISTRY, 'w', encoding='utf-8') as f:
-                json.dump(deleted_registry, f, indent=2, ensure_ascii=False)
-            logger.info(f"Updated registry saved to {os.path.abspath(DELETED_REGISTRY)}")
-        else:
-            # Если данных нет — удаляем файл, чтобы он не висел пустым
-            if os.path.exists(DELETED_REGISTRY):
-                os.remove(DELETED_REGISTRY)
-                logger.info("Deleted registry file removed (empty).")
-                
-    except Exception as e:
-        logger.error(f"Failed to save technical files: {e}")
+    # Финал в консоль
+    if config.BRIEF_CONSOLE:
+        print("No changes" if not all_changes else f"{len(all_changes)} changes recorded")
+    else:
+        print(f"Audit finished. Changes: {len(all_changes)}")
+        print("Script ended: AUDIT_TOOL")
 
-    # 6. ФИНАЛЬНЫЙ АУДИТ-ОТЧЕТ В ЛОГ-ФАЙЛ (Теперь в самом конце)
-    logger.info("=== FINAL AUDIT DATA REPORT ===")
-    sections = [
-        ('NEW DATA FOUND', report_data['NEW']),
-        ('UPDATED SCIENTIFIC DATA', report_data['UPDATED']),
-        ('LOST DATA (MISSING IN SOURCE)', report_data['LOST']),
-        ('NEW MIGRATION LINKS', report_data['MIGRATIONS'])
-    ]
-    
-    for idx, (title, items) in enumerate(sections, 1):
-        logger.info(f"[{idx}] {title} ({len(items)})")
-        for item in items:
-            logger.info(f"    {item}")
-
-    logger.info("--- SCRIPT END: AUDIT_TOOL ---")
-    print("Script ended: AUDIT_TOOL")
+if __name__ == "__main__":
+    run_final_audit()

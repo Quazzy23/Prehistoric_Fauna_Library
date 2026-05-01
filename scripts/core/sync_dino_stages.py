@@ -60,7 +60,10 @@ def get_geological_stages():
 
 def sync_stages():
     logging.info("--- SCRIPT START: SYNC_DINO_STAGES ---")
-    print("Starting script: SYNC_DINO_STAGES")
+    if config.BRIEF_CONSOLE:
+        print("SYNC_DINO_STAGES...", end=" ", flush=True)
+    else:
+        print("Starting script: SYNC_DINO_STAGES")
 
     stages_ref = get_geological_stages()
     if not stages_ref:
@@ -79,7 +82,8 @@ def sync_stages():
     
     total = len(reader)
     logging.info(f"Started synchronization for {total} species")
-    print(f"Total species to process: {total}")
+    if not config.BRIEF_CONSOLE:
+        print(f"Total species to process: {total}")
 
     final_data = []
     report_fixed = []
@@ -184,23 +188,26 @@ def sync_stages():
         final_data.append(row)
         
         # Счетчик в консоли
-        sys.stdout.write(f"\rSyncing... [{i}/{total}]")
-        sys.stdout.flush()
+        if not config.BRIEF_CONSOLE:
+            sys.stdout.write(f"\rSyncing... [{i}/{total}]")
+            sys.stdout.flush()
         time.sleep(0.0005) # Задержка для красоты прогресса
 
     # 6. ЗАВЕРШЕНИЕ
-    print()
-    print("Synchronization completed.")
+    if not config.BRIEF_CONSOLE:
+        print()
+        print("Synchronization completed.")
     logging.info("Synchronization completed.")
 
-    # Статистика (каждая строка — отдельный лог, ошибки только если > 0)
-    msg_total = f"Total species processed: {total}"
-    msg_fix = f"Stages updated: {len(report_fixed)}"
+    # Статистика
+    logging.info(f"Total species processed: {total}")
+    logging.info(f"Stages updated: {len(report_fixed)}")
     
-    print(msg_total)
-    logging.info(msg_total)
-    print(msg_fix)
-    logging.info(msg_fix)
+    if config.BRIEF_CONSOLE:
+        print(f"{len(report_fixed)} stages synchronized")
+    else:
+        print(f"Total species processed: {total}")
+        print(f"Stages updated: {len(report_fixed)}")
     
     if len(report_out_of_bounds) > 0:
         msg_err = f"Errors (OUT OF BOUNDS): {len(report_out_of_bounds)}"
@@ -210,14 +217,18 @@ def sync_stages():
     # Сохранение
     if final_data:
         try:
-            fieldnames = final_data[0].keys()
+            # [!] Финальный набор колонок для Аудита и Базы
+            fieldnames = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year", "source_genus"]
+            
             with open(FINAL_CSV, 'w', newline='', encoding='utf-8-sig') as f:
+                # Любое отклонение от fieldnames остановит конвейер
                 writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
                 writer.writeheader()
                 writer.writerows(final_data)
             
             path_msg = f"Data saved to {os.path.abspath(FINAL_CSV)}"
-            print(path_msg)
+            if not config.BRIEF_CONSOLE:
+                print(path_msg)
             logging.info(path_msg)
         except Exception as e:
             err_msg = f"Save failed: {e}"
@@ -230,7 +241,8 @@ def sync_stages():
         for err in report_out_of_bounds:
             print(err.split(')')[0] + ')') 
 
-    print("Script ended: SYNC_DINO_STAGES")
+    if not config.BRIEF_CONSOLE:
+        print("Script ended: SYNC_DINO_STAGES")
 
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")

@@ -1,6 +1,7 @@
 import sys
 sys.dont_write_bytecode = True  # Сначала запрещаем
 import requests
+import json
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
@@ -16,7 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import local_settings
-import audit_tool
 
 # --- ПУТИ И НАСТРОЙКИ ---
 USE_CUSTOM_LIST = config.USE_CUSTOM_LIST
@@ -27,6 +27,7 @@ INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
 OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_data.csv")
 CLASSIFICATION_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "classification_library.csv")
+MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
 
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
@@ -275,7 +276,7 @@ def extract_data(element, true_genus, header_says_type):
         "is_type": header_says_type or found_type_marker
     }
 
-def add_species_to_results(all_results, info, clade, age, stage, reports):
+def add_species_to_results(all_results, info, clade, age, stage, reports, source_genus): # Добавили аргумент
     """Добавляет или обновляет вид, выбирая самый строгий статус и лучшие метаданные."""
     global total_duplicates_ignored
     if not info or not info['genus'] or not info['species']: return "error"
@@ -283,6 +284,7 @@ def add_species_to_results(all_results, info, clade, age, stage, reports):
     info['clade'] = clade
     info['age'] = age
     info['stage'] = stage
+    info['source_genus'] = source_genus # ЗАФИКСИРОВАЛИ СТРАНИЦУ-ИСТОЧНИК
     
     # Ищем существующую запись
     existing = next((res for res in all_results if res['genus'].lower() == info['genus'].lower() and res['species'].lower() == info['species'].lower()), None)
@@ -362,46 +364,36 @@ def load_genera_list():
     return genera_info, source_type, target_path
     
 def check_and_report_historical(element, true_genus, reports):
-    """Проверка на Historical Note: гарантирует ровно один пробел между словами."""
+    """Находит миграции и сразу пишет их в реестр."""
     italic_tags = element.find_all('i')
-    if not italic_tags: 
-        return
+    if not italic_tags: return
 
-    # 1. Собираем весь текст из всех курсивов через пробел
-    raw_combined = " ".join([it.get_text(separator=" ", strip=True) for it in italic_tags])
-    
-    # 2. Чистим от крестов и вопросов
-    raw_combined = raw_combined.replace('†', '').replace('?', '').strip()
-    
-    # 3. МАГИЯ ПРОБЕЛОВ: .split() разбивает строку по ЛЮБОМУ кол-ву пробелов, 
-    # а " ".join() склеивает их обратно строго через один пробел.
-    name_only = " ".join(raw_combined.split())
-    
-    if not name_only: 
-        return
+    name_only = " ".join(" ".join([it.get_text(separator=" ", strip=True) for it in italic_tags]).replace('†', '').replace('?', '').split())
+    if not name_only: return
 
     parts = name_only.split()
-    if not parts: 
-        return
-
+    if not parts: return
     first_word = parts[0].strip()
     
-    # Проверка на заглавную букву и не-наш-род
     if (first_word and first_word[0].isupper() and 
         first_word.lower() != true_genus.lower() and 
         not (len(first_word) <= 2 and first_word.endswith('.'))):
         
         if first_word.lower() not in ["see", "main", "additional", "list"]:
-            # 1. Текстовый отчет (для итогового списка в конце лога)
-            reports['hist_notes'].append(f"{true_genus} -> {name_only}")
+            m_data = {}
+            if os.path.exists(MIGRATIONS_FILE):
+                try:
+                    with open(MIGRATIONS_FILE, 'r', encoding='utf-8') as f:
+                        m_data = json.load(f)
+                except: pass
             
-            # 2. Подробный лог в файл (в процессе работы)
-            log_msg = f"{true_genus}: [HISTORICAL NOTE] Found synonym link: {name_only}"
-            logging.warning(log_msg)
-
-            # Оставляем только это для Аудитора:
-            with data_lock:
-                current_session_facts[f"{true_genus}:HIST:{name_only}"] = "exists"
+            if name_only not in m_data:
+                m_data[name_only] = true_genus
+                with open(MIGRATIONS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(m_data, f, indent=2, ensure_ascii=False)
+                
+                logging.warning(f"{true_genus}: [MIGRATION FOUND] {name_only} -> {true_genus}")
+                reports['hist_notes'].append(f"{name_only} -> {true_genus}")
 
 def extract_synonym_data(element, true_genus):
     """Извлекает синонимы. Исправлено сохранение авторов (small) и вложенные списки."""
@@ -579,7 +571,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
             "genus": genus, "species": MISSING_VAL, "author": MISSING_VAL, 
             "year": MISSING_VAL, "status": "nudum"
         }
-        add_species_to_results(all_results, info_stub, MISSING_VAL, MISSING_VAL, MISSING_VAL, reports)
+        add_species_to_results(all_results, info_stub, MISSING_VAL, MISSING_VAL, MISSING_VAL, reports, genus)
         return
 
     # --- ПОИСК СТРАНИЦЫ ---
@@ -796,7 +788,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
 
                             # Сохраняем в итоговый словарь
                             info['is_type'] = actual_is_type
-                            res_status = add_species_to_results(all_results, info, clade, age, stage, reports)
+                            res_status = add_species_to_results(all_results, info, clade, age, stage, reports, genus)
                             
                             if res_status == "added":
                                 main_species_count += 1
@@ -845,7 +837,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                             continue
                                             
                                         # 2. Попытка добавить в общую базу
-                                        res_status = add_species_to_results(all_results, s_info, clade, age, stage, reports)
+                                        res_status = add_species_to_results(all_results, s_info, clade, age, stage, reports, genus)
                                         
                                         if res_status == "added":
                                             syn_species_count += 1
@@ -933,7 +925,10 @@ def start_mass_parsing():
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
-    print("Starting script: FETCH_DINO_DETAILS")
+    if config.BRIEF_CONSOLE:
+        print("FETCH_DINO_DETAILS...", end=" ", flush=True)
+    else:
+        print("Starting script: FETCH_DINO_DETAILS")
     
     # 2. ЗАГРУЗКА СПИСКА
     genera_to_parse, src_type, src_path = load_genera_list()
@@ -975,10 +970,11 @@ def start_mass_parsing():
 
     # 5. ИНФОРМАЦИЯ В КОНСОЛЬ
     syn_status = "Enabled" if FETCH_SYNONYMS else "Disabled"
-    print(f"Synonyms Parsing: {syn_status}")
     logging.info(f"Synonyms Parsing: {syn_status}")
-    print(f"Source: {os.path.basename(src_path)}")
-    print(f"Total genera to process: {total}")
+    if not config.BRIEF_CONSOLE:
+        print(f"Synonyms Parsing: {syn_status}")
+        print(f"Source: {os.path.basename(src_path)}")
+        print(f"Total genera to process: {total}")
 
     # 6. ЗАПУСК ПАРСИНГА
     if USE_PARALLEL:
@@ -1000,8 +996,9 @@ def start_mass_parsing():
             
             for i, future in enumerate(futures, 1):
                 future.result()
-                sys.stdout.write(f"\rParsing... [{i}/{total_tasks}]")
-                sys.stdout.flush()
+                if not config.BRIEF_CONSOLE:
+                    sys.stdout.write(f"\rParsing... [{i}/{total_tasks}]")
+                    sys.stdout.flush()
     else:
         for i, gen_data in enumerate(genera_to_parse, 1):
             genus = gen_data['name']
@@ -1010,27 +1007,29 @@ def start_mass_parsing():
             # ЛОГИКА ФЛАГА: Если нудумы запрещены, просто пропускаем
             if not config.INCLUDE_NOMINA_NUDA and "nudum" in str(initial_status).lower():
                 logging.info(f"{genus}: SKIP (nomen nudum excluded by config)")
-                sys.stdout.write(f"\rParsing... [{i}/{total}]")
-                sys.stdout.flush()
+                if not config.BRIEF_CONSOLE:
+                    sys.stdout.write(f"\rParsing... [{i}/{total}]")
+                    sys.stdout.flush()
                 continue
 
             process_single_genus(genus, initial_status, session, all_results, reports)
-            sys.stdout.write(f"\rParsing... [{i}/{total}]")
-            sys.stdout.flush()
+            if not config.BRIEF_CONSOLE:
+                sys.stdout.write(f"\rParsing... [{i}/{total}]")
+                sys.stdout.flush()
 
     # 7. ЗАВЕРШЕНИЕ
-    print() # Просто переносим курсор на новую строку, сохраняя счетчик [N/N]
-    print("Parsing completed.")
     logging.info("Parsing completed.")
-
     species_count_msg = f"Total species extracted: {len(all_results)}"
-    print(species_count_msg)
-    logging.info(species_count_msg)
-
     size_mb = total_bytes_downloaded / (1024 * 1024)
     size_report = f"Total data downloaded: {size_mb:.2f} MB"
-    print(size_report)
+    logging.info(species_count_msg)
     logging.info(size_report)
+
+    if not config.BRIEF_CONSOLE:
+        print() 
+        print("Parsing completed.")
+        print(species_count_msg)
+        print(size_report)
 
     save_to_csv(all_results, OUTPUT_FILE)
     save_classification_library(taxon_cache, CLASSIFICATION_FILE)
@@ -1039,45 +1038,39 @@ def start_mass_parsing():
     # (0 видов + нет инфобокса + не тетраподы)
     total_suspicious = len(reports['zero_species']) + len(reports['no_infobox']) + len(reports['out_of_class'])
     
-    if total_suspicious > 0:
-        print(f"Suspicious cases found: {total_suspicious}. Check logs for details.")
+    if config.BRIEF_CONSOLE:
+        susp_msg = f" | {total_suspicious} suspicious" if total_suspicious > 0 else ""
+        print(f"{len(all_results)} species extracted{susp_msg}")
+    else:
+        if total_suspicious > 0:
+            print(f"Suspicious cases found: {total_suspicious}. Check logs for details.")
     
-# --- ЗАПУСК АУДИТА (Вложенный скрипт) ---
-    input_filename = os.path.basename(src_path)
-    
-    logging.info("--- SCRIPT START: AUDIT_TOOL ---")
-    audit_tool.run_audit(current_session_facts, input_filename)
-    
-    # Ссылка на подробный лог (Золотой стандарт)
-    audit_log_path = os.path.join(BASE_DIR, "data", "logs", "audit_tool.log")
-    logging.info(f"See audit details in: {os.path.abspath(audit_log_path)}")
-    logging.info("--- SCRIPT END: AUDIT_TOOL ---")
-    
-    # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
-    logging.info("=== FINAL DATA AUDIT REPORT ===")
-    final_audit_data = [
-        ('HISTORICAL NOTES', reports['hist_notes']),
+    # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ (Только по процессу сбора)
+    logging.info("=== FINAL DATA FETCH REPORT ===")
+    final_report_sections = [
+        ('HISTORICAL NOTES (MIGRATIONS)', reports['hist_notes']),
         ('FOUND AS ALIASES', reports['found_as']),
         ('REDIRECTS / SKIPPED', reports['redirects']),
         ('OUT OF CLASSIFICATION SCOPE', reports['out_of_class']),
-        ('DATA UPGRADES (Secondary -> Primary)', reports['upgrades']),
+        ('DATA UPGRADES', reports['upgrades']),
         ('DUPLICATES IGNORED', reports['duplicates']),
         ('TAXONOMY FETCH ERRORS', reports['taxonomy_errors']),
         ('ZERO SPECIES FOUND', reports['zero_species']),
         ('NO INFOBOX FOUND', reports['no_infobox'])
     ]
-    for idx, (title, items) in enumerate(final_audit_data, 1):
+    for idx, (title, items) in enumerate(final_report_sections, 1):
         logging.info(f"[{idx}] {title} ({len(items)})")
         for item in items:
             logging.info(item)
 
-    print("\nScript ended: FETCH_DINO_DETAILS")
+    if not config.BRIEF_CONSOLE:
+        print("Script ended: FETCH_DINO_DETAILS")
     logging.info("--- SCRIPT END: FETCH_DINO_DETAILS ---")
 
-    return current_session_facts, input_filename
+    # УДАЛИЛИ RETURN: Теперь функция просто завершается
 
 def save_to_csv(all_results, filename):
-    keys = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year"]
+    keys = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year", "source_genus"]
     try:
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
@@ -1089,7 +1082,8 @@ def save_to_csv(all_results, filename):
                 writer.writerow(clean_row)
         
         msg = f"Data saved to {os.path.abspath(filename)}"
-        print(msg)
+        if not config.BRIEF_CONSOLE:
+            print(msg)
         logging.info(msg) # Пишем в лог об успехе
 
     except Exception as e:
@@ -1119,7 +1113,8 @@ def save_classification_library(cache, filename):
                     
         # ИСПРАВЛЕННЫЙ ВЫВОД:
         msg = f"Classification library saved to {os.path.abspath(filename)}"
-        print(msg)
+        if not config.BRIEF_CONSOLE:
+            print(msg)
         logging.info(msg) # Теперь пишется и в лог-файл
 
     except Exception as e:

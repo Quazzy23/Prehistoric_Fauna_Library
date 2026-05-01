@@ -61,7 +61,11 @@ def fetch_geochronology():
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
-    print("Starting script: FETCH_GEOCHRONOLOGY")
+
+    if config.BRIEF_CONSOLE:
+        print("FETCH_GEOCHRONOLOGY...", end=" ", flush=True)
+    else:
+        print("Starting script: FETCH_GEOCHRONOLOGY")
 
     logging.info(f"Connecting to: {WIKI_URL}")
     try:
@@ -117,12 +121,14 @@ def fetch_geochronology():
         
         r_idx += 1
         # Счетчик в консоли (теперь будет [117/117])
-        sys.stdout.write(f"\rBuilding matrix... [{r_idx}/{total_data}]")
-        sys.stdout.flush()
+        if not config.BRIEF_CONSOLE:
+            sys.stdout.write(f"\rBuilding matrix... [{r_idx}/{total_data}]")
+            sys.stdout.flush()
         # Плавный прогресс
         time.sleep(0.0005)
 
-    print()
+    if not config.BRIEF_CONSOLE:
+        print()
     logging.info("Matrix built successfully")
 
     # 2. ИЗВЛЕЧЕНИЕ И ОЧИСТКА
@@ -182,24 +188,29 @@ def fetch_geochronology():
         logging.info(f"{period} | {epoch} | {stage} | {age_val}")
 
     # 3. ЗАВЕРШЕНИЕ И СОХРАНЕНИЕ
-    sys.stdout.write('\r' + ' ' * 40 + '\r')
-    sys.stdout.flush()
-    print("Discovery completed.")
+    if not config.BRIEF_CONSOLE:
+        sys.stdout.write('\r' + ' ' * 40 + '\r')
+        sys.stdout.flush()
+        print("Discovery completed.")
     logging.info("Discovery completed.")
 
     size_mb = total_bytes / (1024 * 1024)
     size_report = f"Total data downloaded: {size_mb:.2f} MB"
-    print(size_report)
-    logging.info(size_report)
-
     count_msg = f"Total geological units found: {len(final_results)}"
-    print(count_msg)
+
+    logging.info(size_report)
     logging.info(count_msg)
+
+    if config.BRIEF_CONSOLE:
+        print(f"{len(final_results)} geological units loaded")
+    else:
+        print(size_report)
+        print(count_msg)
 
     save_geodata_to_csv(final_results, GEO_OUTPUT_FILE)
 
-    print("Script ended: FETCH_GEOCHRONOLOGY")
-
+    if not config.BRIEF_CONSOLE:
+        print("Script ended: FETCH_GEOCHRONOLOGY")
     logging.info("--- SCRIPT END: FETCH_GEOCHRONOLOGY ---")
 
 def save_geodata_to_csv(results, filename):
@@ -213,7 +224,8 @@ def save_geodata_to_csv(results, filename):
             writer.writerows(results)
         
         path_msg = f"Data saved to {os.path.abspath(filename)}"
-        print(path_msg)
+        if not config.BRIEF_CONSOLE:
+            print(path_msg)
         logging.info(path_msg)
     except Exception as e:
         err_msg = f"FILES: ERROR (CSV export failed: {e})"

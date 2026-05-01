@@ -17,9 +17,10 @@ WIKI_LIST_URL = config.WIKI_LIST_URL
 USER_EMAIL = local_settings.USER_EMAIL
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-# Новый путь для CSV
 GENERA_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
-CUSTOM_DIR = os.path.join(BASE_DIR, "data", "custom_lists")
+# Сразу прописываем пути к файлам
+CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
+SAMPLE_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", "sample_genera.txt")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
@@ -78,19 +79,50 @@ def collect_genera():
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
-    print("Starting script: COLLECT_GENERA_LIST")
+    if config.BRIEF_CONSOLE:
+        print("COLLECT_GENERA_LIST...", end=" ", flush=True)
+    else:
+        print("Starting script: COLLECT_GENERA_LIST")
 
-    # Проверка и создание папки custom_lists
+    # Проверка и создание структуры кастомных списков
     if config.CREATE_CUSTOM_LIST_DIR:
-        if not os.path.exists(CUSTOM_DIR):
+        custom_dir = os.path.dirname(SAMPLE_LIST_PATH)
+        
+        # 1. Сначала проверяем/создаем папку
+        if not os.path.exists(custom_dir):
             try:
-                os.makedirs(CUSTOM_DIR, exist_ok=True)
-                logging.info(f"Created custom lists directory: {CUSTOM_DIR}")
+                os.makedirs(custom_dir, exist_ok=True)
+                logging.info(f"Created custom lists directory: {custom_dir}")
             except Exception as e:
-                logging.error(f"Failed to create directory {CUSTOM_DIR}: {e}")
+                logging.error(f"Failed to create directory {custom_dir}: {e}")
+        
+        # 2. Теперь проверяем файл-образец (Sample)
+        if os.path.exists(SAMPLE_LIST_PATH):
+            logging.info(f"Custom lists sample file already exists: {SAMPLE_LIST_PATH}")
         else:
-            logging.info(f"Custom lists directory already exists: {CUSTOM_DIR}")
+            sample_genera = [
+                "Aardonyx", "Triceratops", "Tyrannosaurus", "Cryptarcus", 
+                "Obelignathus", "Spinosaurus", "Citipes", "Allosaurus", 
+                "Brontosaurus", "Velociraptor"
+            ]
+            try:
+                with open(SAMPLE_LIST_PATH, 'w', encoding='utf-8') as f:
+                    f.write("\n".join(sample_genera))
+                logging.info(f"Created sample list file: {os.path.abspath(SAMPLE_LIST_PATH)}")
+            except Exception as e:
+                logging.error(f"Failed to create sample list: {e}")
 
+    # [!] ЗАГРУЗКА КАСТОМНОГО ФИЛЬТРА
+    genus_filter = set()
+    if config.USE_CUSTOM_LIST:
+        if os.path.exists(CUSTOM_LIST_PATH):
+            with open(CUSTOM_LIST_PATH, 'r', encoding='utf-8') as f:
+                genus_filter = {line.strip().lower() for line in f if line.strip()}
+            logging.info(f"Filter active: using {config.CUSTOM_LIST_NAME} as whitelist ({len(genus_filter)} names)")
+        else:
+            logging.error(f"Filter error: custom list {config.CUSTOM_LIST_NAME} not found!")
+    else:
+        logging.info("Filter inactive: using all found genera")
     logging.info(f"Connecting to: {WIKI_LIST_URL}")
     
     try:
@@ -149,6 +181,9 @@ def collect_genera():
         
         if match:
             name = match.group(1)
+            # [!] ФИЛЬТРАЦИЯ: пропускаем роды, которых нет в нашем списке
+            if config.USE_CUSTOM_LIST and genus_filter and name.lower() not in genus_filter:
+                continue
             full_text = re.sub(r'<[^>]*>', '', actual_content)
             full_text = re.sub(r'\[\d+\]', '', full_text).strip()
             text_parts = re.split(r'[-–—]', full_text, maxsplit=1)
@@ -217,13 +252,15 @@ def collect_genera():
                 report_others.append(log_entry)
                 c_oth += 1
             
-            sys.stdout.write(f"\rDiscovering... [{len(genera_data)}]")
-            sys.stdout.flush()
+            if not config.BRIEF_CONSOLE:
+                sys.stdout.write(f"\rDiscovering... [{len(genera_data)}]")
+                sys.stdout.flush()
             time.sleep(0.0005)
 
     # Завершение парсинга (просто переходим на новую строку, сохраняя счетчик)
-    print() 
-    print("Discovery completed.")
+    if not config.BRIEF_CONSOLE:
+        print() 
+        print("Discovery completed.")
 
     logging.info("Discovery completed.")
 
@@ -242,16 +279,21 @@ def collect_genera():
             size_mb = total_bytes / (1024 * 1024)
             size_report = f"Total data downloaded: {size_mb:.2f} MB"
             count_msg = f"Total unique genera found: {len(genera_data)}"
-            # Вывод статистики в консоль через табуляцию
-            print(f"DUPLICATES: {c_dup}\tSYNONYMS: {c_syn}\tNUDUM: {c_nud}\tPREOCCUPIED: {c_pre}\tDUBIOUS/СHIMAERA: {c_oth}")
             path_msg = f"Status data saved to {os.path.abspath(GENERA_CSV)}"
 
-            print(size_report)
             logging.info(size_report)
-            print(count_msg)
             logging.info(count_msg)
-            print(path_msg)
             logging.info(path_msg)
+
+            if config.BRIEF_CONSOLE:
+                mode_str = "filtered" if config.USE_CUSTOM_LIST else "total"
+                print(f"{len(genera_data)} genera found ({mode_str})")
+            else:
+                # В полном режиме выводим только научную статистику и пути
+                print(f"DUPLICATES: {c_dup}\tSYNONYMS: {c_syn}\tNUDUM: {c_nud}\tPREOCCUPIED: {c_pre}\tDUBIOUS/СHIMAERA: {c_oth}")
+                print(size_report)
+                print(count_msg)
+                print(path_msg)
 
         except Exception as e:
             err_msg = f"FILES: ERROR (Save failed: {e})"
@@ -262,7 +304,8 @@ def collect_genera():
         logging.error(msg)
         print(f"[ERROR] {msg}")
 
-    print("Script ended: COLLECT_GENERA_LIST")
+    if not config.BRIEF_CONSOLE:
+        print("Script ended: COLLECT_GENERA_LIST")
 
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")

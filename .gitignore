@@ -1,28 +1,15 @@
-# Игнорируем папку моделей (она пойдет на Hugging Face)
+# 1. Тяжелые 3D ассеты (Hugging Face / LFS)
 models/
 
-# Игнорируем логи и временные файлы
-data/logs/
+# 2. Локальные данные
+data/
+database/
 __pycache__/
 
-# Настройки пользователя
+# 3. Личные и временные файлы
 scripts/local_settings.py
-
-# Игнорируем базу данных
-database/
-
-# Игнорируем расходники экспорта (кроме критических)
-data/exports/tables/
-data/exports/snapshots/
-data/project_history.txt
-
-# Отдельно игнорируем финальные файлы, пока их корректность не утсверждена на 100%
-data/exports/*.json
-
-# Скрипты и кастомные листы для тестирования
-scripts/utils/
-data/custom_lists/*
-!data/custom_lists/genera.txt
-
-# Заметки
+project_history.txt
 notes/
+
+# 4. Тестовые утилиты
+scripts/utils/

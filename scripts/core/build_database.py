@@ -45,7 +45,10 @@ def build_database():
     else:
         logging.error("Configuration loading failed")
     
-    print("Starting script: BUILD_DATABASE")
+    if config.BRIEF_CONSOLE:
+        print("BUILD_DATABASE...", end=" ", flush=True)
+    else:
+        print("Starting script: BUILD_DATABASE")
 
     # 1. ПРЕДВАРИТЕЛЬНЫЙ ПОДСЧЕТ И ЗАГРУЗКА ДАННЫХ
     data_geo, data_taxo, data_species = [], [], []
@@ -88,7 +91,8 @@ def build_database():
     n_taxo = len(data_taxo) - 1 if len(data_taxo) > 0 else 0
     total_items = n_species + n_geo + n_taxo
 
-    print(f"Total species/geo units/taxa branches: {n_species}/{n_geo}/{n_taxo}")
+    if not config.BRIEF_CONSOLE:
+        print(f"Total species/geo units/taxa branches: {n_species}/{n_geo}/{n_taxo}")
     logging.info(f"Summary total to import: {total_items} items")
 
     # 2. ПОДГОТОВКА БД И ТАБЛИЦ
@@ -158,7 +162,9 @@ def build_database():
             cursor.execute(f"INSERT INTO {config.TABLE_GEOLOGY} (eon, era, period, epoch, stage, start_ma, uncertainty) VALUES (?,?,?,?,?,?,?)",
                            (row['eon'], row['era'], row['period'], row['epoch'], row['stage'], start_ma, uncertainty))
             current_progress += 1
-            sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
+            if not config.BRIEF_CONSOLE:
+                sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
+                sys.stdout.flush()
             sys.stdout.flush()
         logging.info(f"Geochronology table: OK (Imported {n_geo} units)")
     except Exception as e: 
@@ -187,7 +193,8 @@ def build_database():
                              (clade_name, hierarchy_path))
                 
                 current_progress += 1
-                sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
+                if not config.BRIEF_CONSOLE:
+                    sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
                 sys.stdout.flush()
         logging.info(f"Taxonomy table: OK (Imported {n_taxo} branches)")
     except Exception as e: 
@@ -204,8 +211,9 @@ def build_database():
             cursor.execute(f"INSERT INTO {config.TABLE_SPECIES} (genus, species, is_type, status, clade, stage, age_ma, author, year) VALUES (?,?,?,?,?,?,?,?,?)",
                            (row['genus'], row['species'], is_type_val, row['status'], row['clade'], row['stage'], row['age'], row['author'], year_val))
             current_progress += 1
-            sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
-            sys.stdout.flush()
+            if not config.BRIEF_CONSOLE:
+                sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
+                sys.stdout.flush()
             time.sleep(0.0001)
         logging.info(f"Species table: OK (Imported {n_species} records)")
     except Exception as e: 
@@ -215,9 +223,11 @@ def build_database():
     conn.close()
 
     # 4. ЗАВЕРШЕНИЕ
-    print()
+    if not config.BRIEF_CONSOLE:
+        print()
     if not errors:
-        print("Import completed.")
+        if not config.BRIEF_CONSOLE:
+            print("Import completed.")
         logging.info("Import completed successfully.")
     else:
         for err in errors:
@@ -242,10 +252,14 @@ ORDER BY genus ASC, is_type ASC, year ASC;
         logging.error(f"SQL template creation failed: {e}")
 
     # ФИНАЛЬНЫЙ ВЫВОД
-    print(f"Database saved to {DB_FILE}")
     logging.info(f"Database saved to {DB_FILE}")
-    print(f"SQL queries saved to {SQL_FILE}")
-    print(f"Script ended: BUILD_DATABASE")
+    
+    if config.BRIEF_CONSOLE:
+        print(f"Database saved ({total_items} records)")
+    else:
+        print(f"Database saved to {DB_FILE}")
+        print(f"SQL queries saved to {SQL_FILE}")
+        print("Script ended: BUILD_DATABASE")
     logging.info(f"--- SCRIPT END: BUILD_DATABASE ---")
 
 if __name__ == "__main__":
