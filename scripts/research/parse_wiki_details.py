@@ -23,11 +23,20 @@ USE_CUSTOM_LIST = config.USE_CUSTOM_LIST
 CUSTOM_LIST_NAME = config.CUSTOM_LIST_NAME
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
+
+# Папка данных для текущего режима (например, data/exports/dinosaurs/tables)
+DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+
+# Входные и выходные таблицы (теперь внутри DATA_ROOT)
+INPUT_CSV = os.path.join(DATA_ROOT, "genera_list.csv")
+OUTPUT_FILE = os.path.join(DATA_ROOT, "raw_fauna.csv")
+CLASSIFICATION_FILE = os.path.join(DATA_ROOT, "taxonomic_tree.csv")
+
+# Пути к кастомным спискам (они остаются общими в data/custom_lists/)
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
-OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_data.csv")
-CLASSIFICATION_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "classification_library.csv")
-MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
+
+# Путь к реестру миграций (берем динамически из конфига)
+MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
 
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
@@ -35,7 +44,7 @@ taxon_lock = threading.Lock()
 
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "fetch_details.log")
+LOG_FILE = os.path.join(LOG_DIR, "parse_wiki_details.log")
 
 USE_PARALLEL = config.USE_PARALLEL
 MAX_WORKERS = config.MAX_WORKERS
@@ -920,15 +929,15 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
 def start_mass_parsing():
     global total_bytes_downloaded
     # 1. СТАРТ (Консоль и Лог)
-    logging.info("--- SCRIPT START: FETCH_DINO_DETAILS ---")
+    logging.info("--- SCRIPT START: PARSE_WIKI_DETAILS ---")
     if config:
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
     if config.BRIEF_CONSOLE:
-        print("FETCH_DINO_DETAILS...", end=" ", flush=True)
+        print("PARSE_WIKI_DETAILS...", end=" ", flush=True)
     else:
-        print("Starting script: FETCH_DINO_DETAILS")
+        print("Starting script: PARSE_WIKI_DETAILS")
     
     # 2. ЗАГРУЗКА СПИСКА
     genera_to_parse, src_type, src_path = load_genera_list()
@@ -1034,6 +1043,12 @@ def start_mass_parsing():
     save_to_csv(all_results, OUTPUT_FILE)
     save_classification_library(taxon_cache, CLASSIFICATION_FILE)
 
+    # [!] ОТЧЕТ ПО РЕЕСТРУ МИГРАЦИЙ (Выводится всегда)
+    msg_mig = f"Migration registry synced: {os.path.abspath(MIGRATIONS_FILE)}"
+    logging.info(msg_mig)
+    if not config.BRIEF_CONSOLE:
+        print(msg_mig)
+
     # Подсчет общего количества проблемных случаев
     # (0 видов + нет инфобокса + не тетраподы)
     total_suspicious = len(reports['zero_species']) + len(reports['no_infobox']) + len(reports['out_of_class'])
@@ -1048,7 +1063,7 @@ def start_mass_parsing():
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ (Только по процессу сбора)
     logging.info("=== FINAL DATA FETCH REPORT ===")
     final_report_sections = [
-        ('HISTORICAL NOTES (MIGRATIONS)', reports['hist_notes']),
+        ('SCIENTIFIC MIGRATIONS FOUND', reports['hist_notes']),
         ('FOUND AS ALIASES', reports['found_as']),
         ('REDIRECTS / SKIPPED', reports['redirects']),
         ('OUT OF CLASSIFICATION SCOPE', reports['out_of_class']),
@@ -1064,8 +1079,8 @@ def start_mass_parsing():
             logging.info(item)
 
     if not config.BRIEF_CONSOLE:
-        print("Script ended: FETCH_DINO_DETAILS")
-    logging.info("--- SCRIPT END: FETCH_DINO_DETAILS ---")
+        print("Script ended: PARSE_WIKI_DETAILS")
+    logging.info("--- SCRIPT END: PARSE_WIKI_DETAILS ---")
 
     # УДАЛИЛИ RETURN: Теперь функция просто завершается
 
@@ -1081,7 +1096,7 @@ def save_to_csv(all_results, filename):
                 clean_row = {k: (" ".join(str(v).split()) if isinstance(v, str) else v) for k, v in res.items()}
                 writer.writerow(clean_row)
         
-        msg = f"Data saved to {os.path.abspath(filename)}"
+        msg = f"Raw fauna data saved to: {os.path.abspath(filename)}"
         if not config.BRIEF_CONSOLE:
             print(msg)
         logging.info(msg) # Пишем в лог об успехе
@@ -1112,13 +1127,13 @@ def save_classification_library(cache, filename):
                 writer.writerow(row)
                     
         # ИСПРАВЛЕННЫЙ ВЫВОД:
-        msg = f"Classification library saved to {os.path.abspath(filename)}"
+        msg = f"Taxonomic tree saved to: {os.path.abspath(filename)}"
         if not config.BRIEF_CONSOLE:
             print(msg)
         logging.info(msg) # Теперь пишется и в лог-файл
 
     except Exception as e:
-        error_msg = f"[ERROR] Could not save classification: {e}"
+        error_msg = f"[ERROR] Could not save taxonomic tree: {e}"
         print(error_msg)
         logging.error(error_msg)
 

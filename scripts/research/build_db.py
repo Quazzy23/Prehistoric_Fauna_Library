@@ -11,12 +11,13 @@ import config
 
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
 
-INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_final.csv")
-GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "geochronology_data.csv")
-CLASSIFICATION_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "classification_library.csv")
+INPUT_CSV = os.path.join(DATA_ROOT, "final_fauna.csv")
+GEO_CSV = os.path.join(DATA_ROOT, "geochronology_ref.csv")
+CLASSIFICATION_CSV = os.path.join(DATA_ROOT, "taxonomic_tree.csv")
 
-DB_DIR = os.path.join(BASE_DIR, "database")
+DB_DIR  = os.path.join(BASE_DIR, "database")
 DB_FILE = os.path.join(DB_DIR, config.DB_NAME)
 
 SQL_DIR = os.path.join(DB_DIR, "sql")
@@ -25,7 +26,7 @@ SQL_FILE = os.path.join(SQL_DIR, "queries.sql")
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "build_database.log")
+LOG_FILE = os.path.join(LOG_DIR, "build_db.log")
 
 MISSING_VAL = "-"
 
@@ -39,16 +40,16 @@ logging.basicConfig(
 )
 
 def build_database():
-    logging.info("--- SCRIPT START: BUILD_DATABASE ---")
+    logging.info("--- SCRIPT START: BUILD_DB ---")
     if config:
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
     
     if config.BRIEF_CONSOLE:
-        print("BUILD_DATABASE...", end=" ", flush=True)
+        print("BUILD_DB...", end=" ", flush=True)
     else:
-        print("Starting script: BUILD_DATABASE")
+        print("Starting script: BUILD_DB")
 
     # 1. ПРЕДВАРИТЕЛЬНЫЙ ПОДСЧЕТ И ЗАГРУЗКА ДАННЫХ
     data_geo, data_taxo, data_species = [], [], []
@@ -259,8 +260,8 @@ ORDER BY genus ASC, is_type ASC, year ASC;
     else:
         print(f"Database saved to {DB_FILE}")
         print(f"SQL queries saved to {SQL_FILE}")
-        print("Script ended: BUILD_DATABASE")
-    logging.info(f"--- SCRIPT END: BUILD_DATABASE ---")
+        print("Script ended: BUILD_DB")
+    logging.info(f"--- SCRIPT END: BUILD_DB ---")
 
 if __name__ == "__main__":
     build_database()

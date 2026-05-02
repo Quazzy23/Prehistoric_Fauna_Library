@@ -19,9 +19,16 @@ def export_dinosaurs_to_csv():
     # КОНСОЛЬ: СТАРТ
     print("Starting script: EXPORT_DB_TO_CSV")
 
+    # --- ПУТИ ---
     BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+    # Путь к общей базе данных (берем имя из config.py)
     DB_PATH = os.path.join(BASE_DIR, "database", config.DB_NAME)
-    OUTPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_for_models.csv")
+
+    # Умный путь к таблице производства (внутри папки текущего режима)
+    DATA_ROOT  = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+    OUTPUT_CSV = os.path.join(DATA_ROOT, "production_list.csv")
+
     LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "export_db_to_csv.log")
 
     # Настройка логирования

@@ -13,11 +13,16 @@ import config
 import metadata_utils
 import local_settings
 
+# [1] ПОДГОТОВКА ПУТЕЙ
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-MODELS_ROOT = os.path.join(BASE_DIR, "models")
-CATALOG_PATH = os.path.join(BASE_DIR, config.MASTER_CATALOG)
-MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
+
+# Папки моделей теперь разделены: models/dinosaurs, models/pterosaurs и т.д.
+MODELS_ROOT = os.path.join(BASE_DIR, "models", config.RESEARCH_MODE)
 DELETED_ROOT = os.path.join(MODELS_ROOT, "_deleted_")
+
+# Реестры (динамически из config.py)
+CATALOG_PATH = os.path.join(BASE_DIR, config.MASTER_CATALOG)
+MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "init_model_folders.log")
 
 def update_info_content(file_path, new_genus, new_species):

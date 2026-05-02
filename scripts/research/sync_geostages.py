@@ -10,14 +10,16 @@ import config
 
 # --- ПУТИ К ФАЙЛАМ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GEO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "geochronology_data.csv")
-DINO_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_validated.csv")
-FINAL_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_final.csv")
+DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+
+GEO_CSV = os.path.join(DATA_ROOT, "geochronology_ref.csv")
+SOURCE_CSV = os.path.join(DATA_ROOT, "validated_fauna.csv")
+FINAL_CSV = os.path.join(DATA_ROOT, "final_fauna.csv")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "sync_stages.log")
+LOG_FILE = os.path.join(LOG_DIR, "sync_geostages.log")
 
 MISSING_VAL = "-"
 
@@ -59,25 +61,25 @@ def get_geological_stages():
     return stages
 
 def sync_stages():
-    logging.info("--- SCRIPT START: SYNC_DINO_STAGES ---")
+    logging.info("--- SCRIPT START: SYNC_GEOSTAGES ---")
     if config.BRIEF_CONSOLE:
-        print("SYNC_DINO_STAGES...", end=" ", flush=True)
+        print("SYNC_GEOSTAGES...", end=" ", flush=True)
     else:
-        print("Starting script: SYNC_DINO_STAGES")
+        print("Starting script: SYNC_GEOSTAGES")
 
     stages_ref = get_geological_stages()
     if not stages_ref:
         print("[ERROR] No geochronology data loaded! Check logs.")
         return
 
-    if not os.path.exists(DINO_CSV):
-        msg = f"Validated data file not found: {DINO_CSV}"
+    if not os.path.exists(SOURCE_CSV):
+        msg = f"Validated data file not found: {SOURCE_CSV}"
         logging.error(msg)
         print(f"[ERROR] {msg}")
         return
 
-    logging.info(f"Opening validated data for syncing: {DINO_CSV}")
-    with open(DINO_CSV, 'r', encoding='utf-8-sig') as f:
+    logging.info(f"Opening validated data for syncing: {SOURCE_CSV}")
+    with open(SOURCE_CSV, 'r', encoding='utf-8-sig') as f:
         reader = list(csv.DictReader(f, delimiter=';'))
     
     total = len(reader)
@@ -226,7 +228,7 @@ def sync_stages():
                 writer.writeheader()
                 writer.writerows(final_data)
             
-            path_msg = f"Data saved to {os.path.abspath(FINAL_CSV)}"
+            path_msg = f"Final list saved to {os.path.abspath(FINAL_CSV)}"
             if not config.BRIEF_CONSOLE:
                 print(path_msg)
             logging.info(path_msg)
@@ -242,7 +244,7 @@ def sync_stages():
             print(err.split(')')[0] + ')') 
 
     if not config.BRIEF_CONSOLE:
-        print("Script ended: SYNC_DINO_STAGES")
+        print("Script ended: SYNC_GEOSTAGES")
 
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")
@@ -259,7 +261,7 @@ def sync_stages():
         for item in items:
             logging.info(item)
 
-    logging.info("--- SCRIPT END: SYNC_DINO_STAGES ---")
+    logging.info("--- SCRIPT END: SYNC_GEOSTAGES ---")
 
 if __name__ == "__main__":
     sync_stages()

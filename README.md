@@ -17,7 +17,7 @@ While the project is currently in the infrastructure and coding phase, it is bui
 In the future, we will be actively seeking top-tier paleo-enthusiasts and professionals to join the team:
 * **Skeletal Illustrators** (to provide accurate orthographic references)
 * **3D Modelers** (to sculpt scientifically acucrate base meshes)
-* **Texture Artists** (to draw beautiful and realistic models' skin)
+* **Texture Artists** (to draw beautiful and realistic models skin)
 * **Riggers** (to create robust, animation-ready armatures)
 
 If you share our passion for absolute paleoaccuracy, keep an eye on this project.
@@ -32,7 +32,7 @@ An automated pipeline that scrapes Wikipedia, extracts taxonomic lineages, maps 
 ### 2. Management (Asset Synchronization)
 Scripts that act as the "bridge" between the scientific database and the physical hard drive. They generate the **Master JSON Registry** and automatically build the hierarchical folder structure (`models/Genus/Species`). This layer handles complex scientific shifts seamlessly:
 * **The Migration System:** Automatically moves folders and renames meshes inside Blender files when a species changes its genus in the scientific literature.
-* **The Phoenix Effect:** Safely archives folders of species removed from science, and automatically resurrects them with all artist data intact if they are re-validated.
+* **The Acrhive System:** Safely archives folders of species removed from science, and automatically resurrects them with all artist data intact if they are re-validated.
 
 ### 3. Production CLI (`pfl.py`)
 The interactive command-line interface that serves as the primary tool for the production team. 

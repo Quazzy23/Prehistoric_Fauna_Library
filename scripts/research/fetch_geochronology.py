@@ -17,12 +17,15 @@ USER_EMAIL = local_settings.USER_EMAIL
 HEADERS = {'User-Agent': f'PrehistoricFaunaLibraryCollector/1.0 (mailto:{USER_EMAIL})'}
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GEO_OUTPUT_FILE = os.path.join(BASE_DIR, "data", "exports", "tables", "geochronology_data.csv")
+
+# Умный путь: data/exports/[MODE]/tables/geochronology_ref.csv
+EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE)
+GEO_OUTPUT_FILE = os.path.join(EXPORT_DIR, "tables", "geochronology_ref.csv")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "geochronology.log")
+LOG_FILE = os.path.join(LOG_DIR, "fetch_geochronology.log")
 
 MISSING_VAL = "-"
 
@@ -223,7 +226,7 @@ def save_geodata_to_csv(results, filename):
             writer.writeheader()
             writer.writerows(results)
         
-        path_msg = f"Data saved to {os.path.abspath(filename)}"
+        path_msg = f"Geochronology ref saved to {os.path.abspath(filename)}"
         if not config.BRIEF_CONSOLE:
             print(path_msg)
         logging.info(path_msg)

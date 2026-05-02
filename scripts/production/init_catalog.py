@@ -10,10 +10,15 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
+# [1] ПОДГОТОВКА ПУТЕЙ
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_for_models.csv")
-MIGRATIONS_FILE = os.path.join(BASE_DIR, "data", "exports", "known_migrations.json")
+
+# Входная таблица из папки текущего режима
+INPUT_CSV = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables", "production_list.csv")
+
+# Реестры (динамически строятся из путей в config.py)
 CATALOG_PATH = os.path.join(BASE_DIR, config.MASTER_CATALOG)
+MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
 LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "init_catalog.log")
 
 def init_catalog():

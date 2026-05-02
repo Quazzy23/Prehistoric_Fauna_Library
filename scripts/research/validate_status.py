@@ -9,9 +9,11 @@ import config
 
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GENERA_LIST_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
-DINO_DATA_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_data.csv")
-OUTPUT_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "dinosaurs_validated.csv")
+DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+
+GENERA_LIST_CSV = os.path.join(DATA_ROOT, "genera_list.csv")
+SOURCE_CSV = os.path.join(DATA_ROOT, "raw_fauna.csv")
+OUTPUT_CSV = os.path.join(DATA_ROOT, "validated_fauna.csv")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
@@ -28,15 +30,15 @@ logging.basicConfig(
 )
 
 def validate_species():
-    logging.info("--- SCRIPT START: VALIDATE_SPECIES_STATUS ---")
+    logging.info("--- SCRIPT START: VALIDATE_STATUS ---")
     if config:
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
     if config.BRIEF_CONSOLE:
-        print("VALIDATE_SPECIES_STATUS...", end=" ", flush=True)
+        print("VALIDATE_STATUS...", end=" ", flush=True)
     else:
-        print("Starting script: VALIDATE_SPECIES_STATUS")
+        print("Starting script: VALIDATE_STATUS")
 
     # 1. ЗАГРУЗКА ИСТОЧНИКА ИСТИНЫ (Статусы родов)
     if not os.path.exists(GENERA_LIST_CSV):
@@ -56,14 +58,14 @@ def validate_species():
     logging.info(f"Source of Truth: Loaded status for {len(genus_truth)} genera")
 
     # 2. ЗАГРУЗКА ДАННЫХ ДЛЯ ОБРАБОТКИ
-    if not os.path.exists(DINO_DATA_CSV):
-        msg = f"File not found: {DINO_DATA_CSV}"
+    if not os.path.exists(SOURCE_CSV):
+        msg = f"File not found: {SOURCE_CSV}"
         logging.error(msg)
         print(f"[ERROR] {msg}")
         return
 
-    logging.info(f"Opening data file for validation: {DINO_DATA_CSV}")
-    with open(DINO_DATA_CSV, 'r', encoding='utf-8-sig') as f:
+    logging.info(f"Opening data file for validation: {SOURCE_CSV}")
+    with open(SOURCE_CSV, 'r', encoding='utf-8-sig') as f:
         species_list = list(csv.DictReader(f, delimiter=';'))
 
     total = len(species_list)
@@ -138,7 +140,7 @@ def validate_species():
                 writer.writeheader()
                 writer.writerows(validated_data)
             
-            msg = f"Data saved to {os.path.abspath(OUTPUT_CSV)}"
+            msg = f"Validated list saved to {os.path.abspath(OUTPUT_CSV)}"
             if not config.BRIEF_CONSOLE:
                 print(msg)
             logging.info(msg)
@@ -148,7 +150,7 @@ def validate_species():
             logging.error(err_msg)
 
     if not config.BRIEF_CONSOLE:
-        print("Script ended: VALIDATE_SPECIES_STATUS")
+        print("Script ended: VALIDATE_STATUS")
 
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")
@@ -163,7 +165,7 @@ def validate_species():
             # УБИРАЕМ ОТСТУП: пишем напрямую
             logging.info(item)
 
-    logging.info("--- SCRIPT END: VALIDATE_SPECIES_STATUS ---")
+    logging.info("--- SCRIPT END: VALIDATE_STATUS ---")
 
 if __name__ == "__main__":
     validate_species()

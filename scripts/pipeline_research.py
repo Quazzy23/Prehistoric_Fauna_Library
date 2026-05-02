@@ -9,7 +9,7 @@ from datetime import datetime
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "logs"))
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "main_pipeline.log")
+LOG_FILE = os.path.join(LOG_DIR, "pipeline_research.log")
 
 # 3. ИНИЦИАЛИЗИРУЕМ ЛОГИРОВАНИЕ НЕМЕДЛЕННО
 logging.basicConfig(
@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 
 # 4. БЕЗОПАСНЫЙ ИМПОРТ CONFIG
-logging.info("--- SCRIPT START: MAIN_PIPELINE ---")
+logging.info("--- SCRIPT START: PIPELINE_RESEARCH ---")
 try:
     import config
     logging.info("Configuration loaded successfully")
@@ -33,16 +33,16 @@ except ImportError:
     sys.exit(1) # Выходим с кодом ошибки
 
 # 5. НАСТРОЙКА ПУТЕЙ И ПАЙПЛАЙНА
-SCRIPTS_DIR = os.path.join(BASE_DIR, "core")
+SCRIPTS_DIR = os.path.join(BASE_DIR, "research")
 
 PIPELINE = [
-    "collect_genera_list.py",      # 1. Список родов
+    "fetch_genera_list.py",        # 1. Список родов
     "fetch_geochronology.py",      # 2. Шкала ICS
-    "fetch_dino_details.py",       # 3. Парсинг Википедии
-    "validate_species_status.py",  # 4. Валидация статусов
-    "sync_dino_stages.py",         # 5. Синхронизация времени
+    "parse_wiki_details.py",       # 3. Парсинг Википедии
+    "validate_status.py",          # 4. Валидация статусов
+    "sync_geostages.py",           # 5. Синхронизация времени
     "audit_tool.py",               # 6. ФИНАЛЬНЫЙ ИНСПЕКТОР (Новое место)
-    "build_database.py"            # 7. Заливка в SQLite
+    "build_db.py"                  # 7. Заливка в SQLite
 ]
 
 def run_script(script_name):
@@ -70,8 +70,7 @@ def run_script(script_name):
         return False
 
 def main():
-    logging.info("--- SCRIPT START: MAIN_PIPELINE (v4.0) ---")
-    print("Starting script: MAIN_PIPELINE")
+    print("Starting script: PIPELINE_RESEARCH")
     if not config.BRIEF_CONSOLE:
         print()
 
@@ -93,12 +92,12 @@ def main():
     # Итоговое время
     duration = datetime.now() - start_time
     
-    print("Script ended: MAIN_PIPELINE")
+    print("Script ended: PIPELINE_RESEARCH")
     
     # Финальные логи
     summary = f"Pipeline execution finished. Duration: {duration}. Scripts successful: {success_count}/{len(PIPELINE)}"
     logging.info(summary)
-    logging.info("--- SCRIPT END: MAIN_PIPELINE ---")
+    logging.info("--- SCRIPT END: PIPELINE_RESEARCH ---")
 
 if __name__ == "__main__":
     main()

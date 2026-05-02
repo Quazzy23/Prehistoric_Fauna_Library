@@ -1,28 +1,67 @@
+# ========================================================================
+#
+# PREHISTORIC FAUNA LIBRARY (PFL)
+# Global Configuration & Ecosystem DNA
+#
+# This file governs the research pipeline, scientific weights,
+# and dynamic path mapping for the entire production ecosystem.
+#
+# ========================================================================
+
 import sys
 import os
 
-# [0] СИСТЕМНЫЕ НАСТРОЙКИ
-sys.dont_write_bytecode = True  # Глобальный запрет на создание папок __pycache__
-# True — лаконичный вывод, False — полный отчет
+# [0] СИСТЕМНЫЕ НАСТРОЙКИ (SYSTEM)
+# Глобальный запрет на создание папок __pycache__
+sys.dont_write_bytecode = True
+
+# BRIEF_CONSOLE: Режим вывода в консоль
+# True  — лаконичные отчеты (одна строка на скрипт)
+# False — подробная техническая информация и прогресс-бары
 BRIEF_CONSOLE = False
 
-# ========================================================================
-# ГЛОБАЛЬНЫЕ НАСТРОЙКИ PREHISTORIC FAUNA LIBRARY (CORE)
-# ========================================================================
 
-# [1] ИСТОЧНИКИ ДАННЫХ
-# Флаг USE_CUSTOM_LIST определяет, откуда скрипт fetch_details берет роды:
-# True  — из вашего файла в папке /data/custom_lists/
+# [1] ГЛОБАЛЬНЫЙ РЕЖИМ ИССЛЕДОВАНИЯ (THE MASTER SWITCH)
+# Выберите группу животных, с которой хотите работать. 
+# Это влияет на выбор ссылок, имена таблиц в БД и структуру папок.
+RESEARCH_MODE = "dinosaurs" # Доступные варианты: "dinosaurs", "pterosaurs"
+
+
+# [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING)
+# Конфигурация для разных типов фауны
+WIKI_SETTINGS = {
+    "dinosaurs": {
+        "list_url": "https://en.wikipedia.org/wiki/List_of_dinosaur_genera",
+        "taxonomy_node": "Dinosauromorpha"
+    },
+    "pterosaurs": {
+        "list_url": "https://en.wikipedia.org/wiki/List_of_pterosaur_genera",
+        "taxonomy_node": "Pterosauria"
+    }
+}
+
+# Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
+_current = WIKI_SETTINGS.get(RESEARCH_MODE, WIKI_SETTINGS["dinosaurs"])
+
+WIKI_LIST_URL = _current["list_url"]
+TAXONOMY_START_NODE = _current["taxonomy_node"]
+BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
+GEO_WIKI_URL = "https://en.wikipedia.org/wiki/Geologic_time_scale"
+
+
+# [3] ИСТОЧНИКИ ДАННЫХ (DATA INPUT)
+# USE_CUSTOM_LIST: Откуда скрипт берет список родов для глубокого парсинга:
+# True  — из вашего файла в папке /data/custom_lists/ (например, для тестов)
 # False — из общего списка Wikipedia (сгенерированного первым скриптом)
-USE_CUSTOM_LIST = False
-CUSTOM_LIST_NAME = "sample_genera.txt"
+USE_CUSTOM_LIST = True
+CUSTOM_LIST_NAME = "genera.txt"
 
-# Автоматически создавать папку /data/custom_lists/, если она отсутствует
+# Автоматически создавать папку /data/custom_lists/ и файл-образцы
 CREATE_CUSTOM_LIST_DIR = True
 
 
-# [2] ЛОГИКА СБОРА ДАННЫХ (FETCH SETTINGS)
-# FETCH_SYNONYMS: Собирать ли синонимы со страниц динозавров
+# [4] ЛОГИКА СБОРА ДАННЫХ (FETCH SETTINGS)
+# FETCH_SYNONYMS: Собирать ли синонимы со страниц видов
 # INCLUDE_NOMINA_NUDA: Собирать ли роды без научного описания (nomen nudum).
 # EXCLUDE_UNCERTAIN_STAGES: Игнорировать сомнительные упоминания возрастов (напр. "Possible Albian")
 FETCH_SYNONYMS = True
@@ -30,36 +69,37 @@ INCLUDE_NOMINA_NUDA = True
 EXCLUDE_UNCERTAIN_STAGES = True
 
 
-# [3] ТАКСОНОМИЯ И КЛАССИФИКАЦИЯ
-# Таксон, с которого начинается отсчет дерева (всё, что выше него, игнорируется).
-TAXONOMY_START_NODE = "Dinosauromorpha"
-
-
-# [4] ПРОИЗВОДИТЕЛЬНОСТЬ
-# USE_PARALLEL: Использовать многопоточность для ускорения парсинга.
-# MAX_WORKERS: Количество одновременных запросов к Wikipedia. Не ставьте больше 20-25.
+# [5] ПРОИЗВОДИТЕЛЬНОСТЬ (PERFORMANCE)
+# USE_PARALLEL: Использовать многопоточность для ускорения парсинга (ThreadPool).
+# MAX_WORKERS: Количество одновременных потоков. Рекомендуется 20-25.
 USE_PARALLEL = True
 MAX_WORKERS = 20
 
 
-# [5] НАСТРОЙКИ БАЗЫ ДАННЫХ (SQLITE)
-# Имя файла и названия таблиц в вашей итоговой базе данных.
-DB_NAME = "dinosaurs.sqlite"
+# [6] НАСТРОЙКИ БАЗЫ ДАННЫХ (DATABASE)
+# Все данные хранятся в едином файле prehistoric_library.sqlite
+DB_NAME = "prehistoric_library.sqlite"
 
-TABLE_SPECIES  = "dinosaurs"       # Основная таблица видов
-TABLE_TAXONOMY = "taxonomy"        # Иерархия классификации
-TABLE_GEOLOGY  = "geological_time" # Геохронологический справочник
-
-
-# [5.1] ПУТИ К РЕЕСТРАМ (JSON)
-# Основной каталог — единственный источник истины для производства
-MASTER_CATALOG = os.path.join("data", "exports", "species_catalog.json")
-# Реестр удаленных видов (архив для "эффекта Феникса")
-DELETED_REGISTRY = os.path.join("data", "exports", "deleted_registry.json")
+# Названия таблиц формируются динамически
+TABLE_SPECIES  = RESEARCH_MODE             # Например: "dinosaurs" или "pterosaurs"
+TABLE_TAXONOMY = f"{RESEARCH_MODE}_taxonomy" # Например: "dinosaurs_taxonomy"
+TABLE_GEOLOGY  = "geological_time"         # Общая таблица для всех групп
 
 
-# [6] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (INTERNAL)
-# Веса валидности для разрешения конфликтов. Чем меньше число, тем важнее статус.
+# [7] ДИНАМИЧЕСКИЕ ПУТИ К РЕЕСТРАМ (REGISTRY PATHS)
+# Файлы производства изолированы внутри папок по типам фауны
+# Путь: data/exports/[RESEARCH_MODE]/...
+# Корневая папка экспорта для текущего режима
+EXPORT_ROOT = os.path.join("data", "exports", RESEARCH_MODE)
+
+# Основные реестры
+MASTER_CATALOG   = os.path.join(EXPORT_ROOT, "species_catalog.json")
+DELETED_REGISTRY = os.path.join(EXPORT_ROOT, "deleted_registry.json")
+MIGRATIONS_FILE  = os.path.join(EXPORT_ROOT, "known_migrations.json")
+
+
+# [8] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (SCIENTIFIC WEIGHTS)
+# Веса валидности для разрешения конфликтов. Чем меньше число, тем статус важнее.
 STATUS_WEIGHTS = {
     'excluded': 0,
     'synonym': 1,
@@ -70,9 +110,3 @@ STATUS_WEIGHTS = {
     'dubious': 3,
     'valid': 4
 }
-
-
-# [7] ТЕХНИЧЕСКИЕ ССЫЛКИ (URLS)
-BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
-WIKI_LIST_URL = "https://en.wikipedia.org/wiki/List_of_dinosaur_genera"
-GEO_WIKI_URL  = "https://en.wikipedia.org/wiki/Geologic_time_scale"

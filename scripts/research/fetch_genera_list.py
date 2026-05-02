@@ -17,15 +17,18 @@ WIKI_LIST_URL = config.WIKI_LIST_URL
 USER_EMAIL = local_settings.USER_EMAIL
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-GENERA_CSV = os.path.join(BASE_DIR, "data", "exports", "tables", "genera_list.csv")
-# Сразу прописываем пути к файлам
+
+# Умный путь к таблицам: data/exports/[MODE]/tables/
+EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE)
+GENERA_CSV = os.path.join(EXPORT_DIR, "tables", "genera_list.csv")
+
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
 SAMPLE_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", "sample_genera.txt")
 
 # Настройка логов
 LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "collect_genera.log")
+LOG_FILE = os.path.join(LOG_DIR, "fetch_genera_list.log")
 
 MISSING_VAL = "-"
 
@@ -74,15 +77,15 @@ def get_all_statuses(text):
     return found_matches
 
 def collect_genera():
-    logging.info("--- SCRIPT START: COLLECT_GENERA_LIST ---")
+    logging.info("--- SCRIPT START: FETCH_GENERA_LIST ---")
     if config:
         logging.info("Configuration loaded successfully")
     else:
         logging.error("Configuration loading failed")
     if config.BRIEF_CONSOLE:
-        print("COLLECT_GENERA_LIST...", end=" ", flush=True)
+        print("FETCH_GENERA_LIST...", end=" ", flush=True)
     else:
-        print("Starting script: COLLECT_GENERA_LIST")
+        print("Starting script: FETCH_GENERA_LIST")
 
     # Проверка и создание структуры кастомных списков
     if config.CREATE_CUSTOM_LIST_DIR:
@@ -279,7 +282,7 @@ def collect_genera():
             size_mb = total_bytes / (1024 * 1024)
             size_report = f"Total data downloaded: {size_mb:.2f} MB"
             count_msg = f"Total unique genera found: {len(genera_data)}"
-            path_msg = f"Status data saved to {os.path.abspath(GENERA_CSV)}"
+            path_msg = f"Genera list saved to {os.path.abspath(GENERA_CSV)}"
 
             logging.info(size_report)
             logging.info(count_msg)
@@ -305,7 +308,7 @@ def collect_genera():
         print(f"[ERROR] {msg}")
 
     if not config.BRIEF_CONSOLE:
-        print("Script ended: COLLECT_GENERA_LIST")
+        print("Script ended: FETCH_GENERA_LIST")
 
     # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
     logging.info("=== FINAL DATA AUDIT REPORT ===")
@@ -324,7 +327,7 @@ def collect_genera():
         for item in items:
             logging.info(item)
     
-    logging.info("--- SCRIPT END: COLLECT_GENERA_LIST ---")
+    logging.info("--- SCRIPT END: FETCH_GENERA_LIST ---")
 
 if __name__ == "__main__":
     collect_genera()
