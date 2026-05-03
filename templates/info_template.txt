@@ -1,0 +1,22 @@
+genus: {genus|}
+species: {species|}
+status: {status|empty}
+
+model_status: {m_status|free}
+claimed_by: {user|}
+
+base_specimen: {base_specimen|}
+scale_specimen: {scale_specimen|}
+
+skeletal: {skeletal|}
+mesh: {mesh|}
+texture: {texture|}
+rig: {rig|}
+
+skeletal_approved_by: {skeletal_approved_by|}
+mesh_approved_by: {mesh_approved_by|}
+texture_approved_by: {texture_approved_by|}
+rig_approved_by: {rig_approved_by|}
+
+notes:
+{notes}

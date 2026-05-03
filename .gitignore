@@ -2,14 +2,20 @@
 models/
 
 # 2. Локальные данные
-data/
+custom_lists/
+export/
 database/
 __pycache__/
 
-# 3. Личные и временные файлы
+# 3. Личные настройки и рабочее пространство
 scripts/local_settings.py
+*.code-workspace
 project_history.txt
-notes/
 
-# 4. Тестовые утилиты
-scripts/utils/
+# 4. Скрипты обслуживания (Maintenance)
+# Игнорируем всё в папке, кроме главного инструмента сброса
+scripts/maintenance/*
+!scripts/maintenance/reset_system.py
+
+# 5. Заметки
+notes/

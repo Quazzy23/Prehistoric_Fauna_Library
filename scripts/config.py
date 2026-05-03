@@ -20,6 +20,11 @@ sys.dont_write_bytecode = True
 # False — подробная техническая информация и прогресс-бары
 BRIEF_CONSOLE = False
 
+# ПУТЬ К ЛОГАМ (Вынос за пределы проекта)
+# Динамическое определение пути к логам в AppData текущего пользователя
+# Это будет работать на любой машине автоматически
+LOGS_DIR = os.path.join(os.getenv('LOCALAPPDATA', ''), 'PFL_Library', 'logs')
+
 
 # [1] ГЛОБАЛЬНЫЙ РЕЖИМ ИССЛЕДОВАНИЯ (THE MASTER SWITCH)
 # Выберите группу животных, с которой хотите работать. 
@@ -54,7 +59,7 @@ GEO_WIKI_URL = "https://en.wikipedia.org/wiki/Geologic_time_scale"
 # True  — из вашего файла в папке /data/custom_lists/ (например, для тестов)
 # False — из общего списка Wikipedia (сгенерированного первым скриптом)
 USE_CUSTOM_LIST = True
-CUSTOM_LIST_NAME = "genera.txt"
+CUSTOM_LIST_NAME = "sample_genera.txt"
 
 # Автоматически создавать папку /data/custom_lists/ и файл-образцы
 CREATE_CUSTOM_LIST_DIR = True
@@ -87,15 +92,21 @@ TABLE_GEOLOGY  = "geological_time"         # Общая таблица для в
 
 
 # [7] ДИНАМИЧЕСКИЕ ПУТИ К РЕЕСТРАМ (REGISTRY PATHS)
-# Файлы производства изолированы внутри папок по типам фауны
-# Путь: data/exports/[RESEARCH_MODE]/...
-# Корневая папка экспорта для текущего режима
-EXPORT_ROOT = os.path.join("data", "exports", RESEARCH_MODE)
+# Папка для ваших ручных списков
+CUSTOM_LISTS_DIR = "custom_lists"
 
-# Основные реестры
-MASTER_CATALOG   = os.path.join(EXPORT_ROOT, "species_catalog.json")
-DELETED_REGISTRY = os.path.join(EXPORT_ROOT, "deleted_registry.json")
-MIGRATIONS_FILE  = os.path.join(EXPORT_ROOT, "known_migrations.json")
+# Корневая папка хранилища для текущего режима
+STORAGE_BASE_NAME = "export" 
+STORAGE_ROOT = os.path.join(STORAGE_BASE_NAME, RESEARCH_MODE)
+
+# Подпапки внутри хранилища (унификация для всех скриптов)
+TABLES_DIR    = os.path.join(STORAGE_ROOT, "tables")
+SNAPSHOTS_DIR = os.path.join(STORAGE_ROOT, "snapshots")
+
+# Основные реестры (пути относительно корня проекта)
+MASTER_CATALOG   = os.path.join(STORAGE_ROOT, "species_catalog.json")
+DELETED_REGISTRY = os.path.join(STORAGE_ROOT, "deleted_registry.json")
+MIGRATIONS_FILE  = os.path.join(STORAGE_ROOT, "known_migrations.json")
 
 
 # [8] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (SCIENTIFIC WEIGHTS)

@@ -18,17 +18,15 @@ USER_EMAIL = local_settings.USER_EMAIL
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Умный путь к таблицам: data/exports/[MODE]/tables/
-EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE)
-GENERA_CSV = os.path.join(EXPORT_DIR, "tables", "genera_list.csv")
+# [!] УНИФИКАЦИЯ: Берем путь к таблицам из конфига
+GENERA_CSV = os.path.join(BASE_DIR, config.TABLES_DIR, "genera_list.csv")
 
-CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
-SAMPLE_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", "sample_genera.txt")
+CUSTOM_LIST_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, config.CUSTOM_LIST_NAME)
+SAMPLE_LIST_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, "sample_genera.txt")
 
-# Настройка логов
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "fetch_genera_list.log")
+# Настройка логов (Берем путь строго из config.py)
+LOG_FILE = os.path.join(config.LOGS_DIR, "fetch_genera_list.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 MISSING_VAL = "-"
 

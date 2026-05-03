@@ -18,14 +18,12 @@ HEADERS = {'User-Agent': f'PrehistoricFaunaLibraryCollector/1.0 (mailto:{USER_EM
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Умный путь: data/exports/[MODE]/tables/geochronology_ref.csv
-EXPORT_DIR = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE)
-GEO_OUTPUT_FILE = os.path.join(EXPORT_DIR, "tables", "geochronology_ref.csv")
+# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
+GEO_OUTPUT_FILE = os.path.join(BASE_DIR, config.TABLES_DIR, "geochronology_ref.csv")
 
 # Настройка логов
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "fetch_geochronology.log")
+LOG_FILE = os.path.join(config.LOGS_DIR, "fetch_geochronology.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 MISSING_VAL = "-"
 

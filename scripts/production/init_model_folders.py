@@ -10,20 +10,23 @@ import subprocess
 # [1] ПОДГОТОВКА ПУТЕЙ И КОНФИГА
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
-import metadata_utils
 import local_settings
 
 # [1] ПОДГОТОВКА ПУТЕЙ
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Папки моделей теперь разделены: models/dinosaurs, models/pterosaurs и т.д.
-MODELS_ROOT = os.path.join(BASE_DIR, "models", config.RESEARCH_MODE)
+# Папки моделей разделены по режимам
+MODELS_ROOT  = os.path.join(BASE_DIR, "models", config.RESEARCH_MODE)
 DELETED_ROOT = os.path.join(MODELS_ROOT, "_deleted_")
 
-# Реестры (динамически из config.py)
-CATALOG_PATH = os.path.join(BASE_DIR, config.MASTER_CATALOG)
+# [!] УНИФИКАЦИЯ: Используем реестры из конфига
+CATALOG_PATH    = os.path.join(BASE_DIR, config.MASTER_CATALOG)
 MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
-LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "init_model_folders.log")
+DELETED_REG_PATH = os.path.join(BASE_DIR, config.DELETED_REGISTRY)
+TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "info_template.txt")
+
+LOG_FILE      = os.path.join(config.LOGS_DIR, "init_model_folders.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 def update_info_content(file_path, new_genus, new_species):
     """Обновляет внутренние метаданные в файле info.txt (Оригинальная логика)."""
@@ -229,58 +232,91 @@ def create_structure():
             is_new = True
             created_count += 1
 
-        # [3] ОБНОВЛЕНИЕ INFO.TXT
-        template = metadata_utils.get_info_template(genus, species, entry['status'], data=entry)
-        with open(info_file_path, 'w', encoding='utf-8') as f:
-            f.write(template)
+        # --- [3] ОБНОВЛЕНИЕ INFO.TXT (Чтение из внешнего шаблона) ---
+        if os.path.exists(TEMPLATE_PATH):
+            with open(TEMPLATE_PATH, "r", encoding="utf-8") as tf:
+                template_text = tf.read()
+            
+            # А) Сохраняем заметки из существующего файла (весь блок целиком)
+            existing_notes = ""
+            if os.path.exists(info_file_path):
+                try:
+                    with open(info_file_path, 'r', encoding='utf-8') as old_f:
+                        content = old_f.read()
+                        if "notes:" in content:
+                            # Забираем всё, что идет после "notes:", сохраняя все переносы строк
+                            existing_notes = content.split("notes:", 1)[1].strip()
+                except: pass
 
+            # Б) Очищаем шаблон от помет дефолтов {key|default} -> {key}
+            import re
+            clean_template = re.sub(r'\{(.*?)\|.*?\}', r'{\1}', template_text)
+
+            # В) Подготовка данных
+            display_data = entry.copy()
+            for k in display_data:
+                if display_data[k] in [None, "None", "-"]: 
+                    display_data[k] = ""
+            
+            # Вставляем заметки. Если их нет - будет пустая строка.
+            display_data["notes"] = existing_notes
+
+            # Г) Запись файла
+            try:
+                info_content = clean_template.format(**display_data)
+                with open(info_file_path, 'w', encoding='utf-8') as f:
+                    f.write(info_content)
+            except KeyError as e:
+                logging.error(f"Template Error: Missing key {e} for {full_name}")
+        else:
+            logging.error(f"Template file not found at: {TEMPLATE_PATH}")
+
+        # --- ЛОГИРОВАНИЕ СОЗДАНИЯ (Золотой стандарт) ---
         if is_new:
-            log_p = f"models\\{genus}\\{full_name}"
+            log_p = f"models\\{config.RESEARCH_MODE}\\{genus}\\{full_name}"
             logging.warning(f"{full_name}: CREATED (Path: {log_p})")
         elif not migration_performed:
-            # Лог OK пишем только если не было миграции и создания
             logging.info(f"{full_name}: OK")
 
     # [4] ЛОГИКА АРХИВАЦИИ (Уборка)
-    # Собираем список активных имен для проверки
-    active_names = {f"{e['genus']} {e['species']}".lower() for e in catalog}
-    
-    for genus_name in os.listdir(MODELS_ROOT):
-        genus_path = os.path.join(MODELS_ROOT, genus_name)
-        if genus_name.startswith('.') or genus_name == "_deleted_" or not os.path.isdir(genus_path):
-            continue
-            
-        for species_folder in os.listdir(genus_path):
-            species_abs = os.path.join(genus_path, species_folder)
-            if not os.path.isdir(species_abs): continue
-            
-            if species_folder.lower() not in active_names:
-                archive_target = os.path.join(DELETED_ROOT, species_folder)
-                os.makedirs(DELETED_ROOT, exist_ok=True)
+    if os.path.exists(MODELS_ROOT):
+        # Собираем список активных имен для проверки
+        active_names = {f"{e['genus']} {e['species']}".lower() for e in catalog}
+        
+        for genus_name in os.listdir(MODELS_ROOT):
+            genus_path = os.path.join(MODELS_ROOT, genus_name)
+            # Пропускаем служебные папки и не-директории
+            if genus_name.startswith('.') or genus_name == "_deleted_" or not os.path.isdir(genus_path):
+                continue
                 
-                if os.path.exists(archive_target):
-                    shutil.rmtree(archive_target)
+            for species_folder in os.listdir(genus_path):
+                species_abs = os.path.join(genus_path, species_folder)
+                if not os.path.isdir(species_abs): continue
                 
-                try:
-                    shutil.move(species_abs, archive_target)
-                    logging.warning(f"[ARCHIVE] Archived to _deleted_: {species_folder}")
-                    archived_count += 1
+                if species_folder.lower() not in active_names:
+                    archive_target = os.path.join(DELETED_ROOT, species_folder)
+                    os.makedirs(DELETED_ROOT, exist_ok=True)
                     
-                    if not os.listdir(genus_path):
-                        os.rmdir(genus_path)
-                except Exception as e:
-                    logging.error(f"[ARCHIVE] Failed to archive {species_folder}: {e}")
+                    if os.path.exists(archive_target):
+                        shutil.rmtree(archive_target)
+                    
+                    try:
+                        shutil.move(species_abs, archive_target)
+                        logging.warning(f"[ARCHIVE] Moved to _deleted_: {species_folder}")
+                        archived_count += 1
+                        
+                        # Удаляем папку рода, если она опустела
+                        if not os.listdir(genus_path):
+                            os.rmdir(genus_path)
+                    except Exception as e:
+                        logging.error(f"[ARCHIVE] Failed to archive {species_folder}: {e}")
 
-    # Уборка папки архива, если она пустая
+    # Уборка папки архива, если она пустая после всех действий
     if os.path.exists(DELETED_ROOT) and not os.listdir(DELETED_ROOT):
-        os.rmdir(DELETED_ROOT)
-        logging.info("[CLEANUP] Deleted empty _deleted_ directory")
-
-    # ПУНКТ 1: Уборка папки _deleted_ если она пустая
-    if os.path.exists(DELETED_ROOT) and not os.listdir(DELETED_ROOT):
-        os.rmdir(DELETED_ROOT)
-        logging.info("[CLEANUP] Deleted empty _deleted_ directory")
-
+        try:
+            os.rmdir(DELETED_ROOT)
+            logging.info("[CLEANUP] Deleted empty _deleted_ directory")
+        except: pass
 
     # [5] ЗАВЕРШЕНИЕ (Вывод итогов)
     sys.stdout.write("\n")

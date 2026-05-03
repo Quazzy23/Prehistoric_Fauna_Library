@@ -10,16 +10,16 @@ import config
 
 # --- ПУТИ К ФАЙЛАМ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
+DATA_ROOT = os.path.join(BASE_DIR, config.TABLES_DIR)
 
 GEO_CSV = os.path.join(DATA_ROOT, "geochronology_ref.csv")
 SOURCE_CSV = os.path.join(DATA_ROOT, "validated_fauna.csv")
 FINAL_CSV = os.path.join(DATA_ROOT, "final_fauna.csv")
 
 # Настройка логов
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "sync_geostages.log")
+LOG_FILE = os.path.join(config.LOGS_DIR, "sync_geostages.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 MISSING_VAL = "-"
 

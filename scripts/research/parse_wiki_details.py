@@ -24,30 +24,25 @@ CUSTOM_LIST_NAME = config.CUSTOM_LIST_NAME
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Папка данных для текущего режима (например, data/exports/dinosaurs/tables)
-DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
-
-# Входные и выходные таблицы (теперь внутри DATA_ROOT)
+# [!] УНИФИКАЦИЯ: Используем готовые переменные из конфига
+DATA_ROOT = os.path.join(BASE_DIR, config.TABLES_DIR)
 INPUT_CSV = os.path.join(DATA_ROOT, "genera_list.csv")
 OUTPUT_FILE = os.path.join(DATA_ROOT, "raw_fauna.csv")
 CLASSIFICATION_FILE = os.path.join(DATA_ROOT, "taxonomic_tree.csv")
 
-# Пути к кастомным спискам (они остаются общими в data/custom_lists/)
-CUSTOM_LIST_PATH = os.path.join(BASE_DIR, "data", "custom_lists", config.CUSTOM_LIST_NAME)
-
-# Путь к реестру миграций (берем динамически из конфига)
+CUSTOM_LIST_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, config.CUSTOM_LIST_NAME)
 MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
+
+# Настройка логов
+LOG_FILE = os.path.join(config.LOGS_DIR, "parse_wiki_details.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+USE_PARALLEL = config.USE_PARALLEL
+MAX_WORKERS = config.MAX_WORKERS
 
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
 taxon_lock = threading.Lock()
-
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "parse_wiki_details.log")
-
-USE_PARALLEL = config.USE_PARALLEL
-MAX_WORKERS = config.MAX_WORKERS
 
 # Замок для безопасной записи данных из разных потоков
 data_lock = threading.Lock()

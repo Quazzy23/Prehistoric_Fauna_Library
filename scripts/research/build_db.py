@@ -11,22 +11,22 @@ import config
 
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
+DATA_ROOT = os.path.join(BASE_DIR, config.TABLES_DIR)
 
 INPUT_CSV = os.path.join(DATA_ROOT, "final_fauna.csv")
 GEO_CSV = os.path.join(DATA_ROOT, "geochronology_ref.csv")
 CLASSIFICATION_CSV = os.path.join(DATA_ROOT, "taxonomic_tree.csv")
 
-DB_DIR  = os.path.join(BASE_DIR, "database")
+DB_DIR = os.path.join(BASE_DIR, "database")
 DB_FILE = os.path.join(DB_DIR, config.DB_NAME)
 
 SQL_DIR = os.path.join(DB_DIR, "sql")
 SQL_FILE = os.path.join(SQL_DIR, "queries.sql")
 
-# Настройка логов
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "build_db.log")
+# Настройка логов (Берем путь строго из config.py)
+LOG_FILE = os.path.join(config.LOGS_DIR, "build_db.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 MISSING_VAL = "-"
 

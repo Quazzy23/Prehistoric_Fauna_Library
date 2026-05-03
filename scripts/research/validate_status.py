@@ -9,16 +9,16 @@ import config
 
 # --- ПУТИ И НАСТРОЙКИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-DATA_ROOT = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
+# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
+DATA_ROOT = os.path.join(BASE_DIR, config.TABLES_DIR)
 
 GENERA_LIST_CSV = os.path.join(DATA_ROOT, "genera_list.csv")
 SOURCE_CSV = os.path.join(DATA_ROOT, "raw_fauna.csv")
 OUTPUT_CSV = os.path.join(DATA_ROOT, "validated_fauna.csv")
 
-# Настройка логов
-LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "validate_status.log")
+# Настройка логов (Берем путь строго из config.py)
+LOG_FILE = os.path.join(config.LOGS_DIR, "validate_status.log")
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,

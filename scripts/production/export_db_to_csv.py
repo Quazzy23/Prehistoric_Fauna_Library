@@ -10,28 +10,29 @@ import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
-def export_dinosaurs_to_csv():
-    # --- НАСТРОЙКИ ТЕСТА ---
-    USE_FILTER = False  
-    FILTER_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "custom_lists", "export_filter.txt")
-    # -----------------------
+# --- ГЛОБАЛЬНЫЕ НАСТРОЙКИ И ПУТИ ---
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-    # КОНСОЛЬ: СТАРТ
+# Путь к базе данных
+DB_PATH = os.path.join(BASE_DIR, "database", config.DB_NAME)
+
+# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
+DATA_ROOT  = os.path.join(BASE_DIR, config.TABLES_DIR)
+OUTPUT_CSV = os.path.join(DATA_ROOT, "production_list.csv")
+
+# Настройки логов
+LOG_FILE = os.path.join(config.LOGS_DIR, "export_db_to_csv.log")
+
+# Настройки фильтрации для тестов
+USE_FILTER = False  
+FILTER_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, "export_filter.txt")
+
+def run_export():
+    """Экспорт научных данных из базы в таблицу производства."""
     print("Starting script: EXPORT_DB_TO_CSV")
 
-    # --- ПУТИ ---
-    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-
-    # Путь к общей базе данных (берем имя из config.py)
-    DB_PATH = os.path.join(BASE_DIR, "database", config.DB_NAME)
-
-    # Умный путь к таблице производства (внутри папки текущего режима)
-    DATA_ROOT  = os.path.join(BASE_DIR, "data", "exports", config.RESEARCH_MODE, "tables")
-    OUTPUT_CSV = os.path.join(DATA_ROOT, "production_list.csv")
-
-    LOG_FILE = os.path.join(BASE_DIR, "data", "logs", "export_db_to_csv.log")
-
-    # Настройка логирования
+    # Инициализация папки логов
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
     logging.basicConfig(
         level=logging.INFO,
@@ -40,7 +41,6 @@ def export_dinosaurs_to_csv():
         handlers=[file_handler]
     )
 
-    # ЛОГ: СТАРТ
     logging.info("--- SCRIPT START: EXPORT_DB_TO_CSV ---")
     logging.info("Configuration loaded successfully")
     logging.info(f"Opening database source: {os.path.abspath(DB_PATH)}")
@@ -84,19 +84,18 @@ def export_dinosaurs_to_csv():
             
             for i, row in enumerate(rows, 1):
                 writer.writerow(row)
-                # Счетчик в консоль
                 sys.stdout.write(f"\rExporting... [{i}/{total_rows}]")
                 sys.stdout.flush()
                 time.sleep(0.0001)
         
-        print() # Перенос строки после завершения счетчика
+        print() 
             
-        # [4] ЗАВЕРШЕНИЕ (Консоль + Лог)
+        # [4] ЗАВЕРШЕНИЕ
         logging.info("Export completed successfully.")
         logging.info(f"Data saved to {os.path.abspath(OUTPUT_CSV)}")
         logging.info("--- SCRIPT END: EXPORT_DB_TO_CSV ---")
 
-        print(f"Total species exported: {len(rows)}")
+        print(f"Total species exported: {total_rows}")
         print(f"Data saved to {os.path.abspath(OUTPUT_CSV)}")
         print("Script ended: EXPORT_DB_TO_CSV")
 
@@ -108,4 +107,4 @@ def export_dinosaurs_to_csv():
         print(f"[ERROR] {error_msg}")
 
 if __name__ == "__main__":
-    export_dinosaurs_to_csv()
+    run_export()

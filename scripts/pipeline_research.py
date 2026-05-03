@@ -1,15 +1,21 @@
 import sys
-sys.dont_write_bytecode = True  # Сначала запрещаем
+sys.dont_write_bytecode = True
 import os
 import subprocess
 import logging
 from datetime import datetime
 
-# 2. ОПРЕДЕЛЯЕМ ПУТИ ДЛЯ ЛОГОВ (Чтобы настроить их ДО импорта конфига)
+# [1] ПОДГОТОВКА ИСТОЧНИКА ИСТИНЫ
+# Добавляем текущую папку в пути, чтобы сразу подтянуть config.py
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import config
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "data", "logs"))
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FILE = os.path.join(LOG_DIR, "pipeline_research.log")
+
+# [2] НАСТРОЙКА ЛОГОВ (Берем путь строго из config.py)
+LOGS_DIR = config.LOGS_DIR
+os.makedirs(LOGS_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOGS_DIR, "pipeline_research.log")
 
 # 3. ИНИЦИАЛИЗИРУЕМ ЛОГИРОВАНИЕ НЕМЕДЛЕННО
 logging.basicConfig(
@@ -21,16 +27,8 @@ logging.basicConfig(
     encoding='utf-8'
 )
 
-# 4. БЕЗОПАСНЫЙ ИМПОРТ CONFIG
 logging.info("--- SCRIPT START: PIPELINE_RESEARCH ---")
-try:
-    import config
-    logging.info("Configuration loaded successfully")
-except ImportError:
-    msg = "CRITICAL ERROR: config.py not found in /scripts/ folder! Pipeline cannot start."
-    logging.critical(msg)
-    print(f"\n[ERROR] {msg}")
-    sys.exit(1) # Выходим с кодом ошибки
+logging.info("Configuration loaded successfully from config.py")
 
 # 5. НАСТРОЙКА ПУТЕЙ И ПАЙПЛАЙНА
 SCRIPTS_DIR = os.path.join(BASE_DIR, "research")
