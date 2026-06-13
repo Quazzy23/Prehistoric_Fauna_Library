@@ -11,6 +11,7 @@ __pycache__/
 scripts/local_settings.py
 *.code-workspace
 project_history.txt
+sandbox_history.txt
 
 # 4. Скрипты обслуживания (Maintenance)
 # Игнорируем всё в папке, кроме главного инструмента сброса

@@ -1,0 +1,17 @@
+{
+    "folders": [
+        {
+            "name": "Prehistoric_Fauna_Library",
+            "path": "."
+        },
+        {
+            "name": "logs",
+            "path": "{logs_path}"
+        }
+    ],
+    "settings": {
+        "files.exclude": {
+            "PFL_Project.code-workspace": true
+        }
+    }
+}

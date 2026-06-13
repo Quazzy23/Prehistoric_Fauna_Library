@@ -23,6 +23,7 @@ DB_FILE = os.path.join(DB_DIR, config.DB_NAME)
 
 SQL_DIR = os.path.join(DB_DIR, "sql")
 SQL_FILE = os.path.join(SQL_DIR, "queries.sql")
+T_SQL = os.path.join(BASE_DIR, "templates", "queries_template.sql")
 
 # Настройка логов (Берем путь строго из config.py)
 LOG_FILE = os.path.join(config.LOGS_DIR, "build_db.log")
@@ -128,7 +129,7 @@ def build_database():
         cursor.execute(f"""
             CREATE TABLE {config.TABLE_SPECIES} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                genus TEXT, species TEXT, is_type BOOLEAN, status TEXT,
+                genus TEXT, species TEXT, is_type BOOLEAN, is_extant BOOLEAN, status TEXT,
                 clade TEXT, stage TEXT, age_ma TEXT, author TEXT, year INTEGER
             )""")
 
@@ -205,17 +206,27 @@ def build_database():
     logging.info("Starting Species import...")
     try:
         for row in data_species:
-            is_type_val = 1 if row.get('is_type') == 'True' else 0
+            # Оставляем текст "True" / "False" как есть для наглядности в базе
+            is_type_val = row.get('is_type', 'False')
+            is_extant_val = row.get('is_extant', 'False') 
+            
             raw_y = row.get('year', '')
             clean_year = re.sub(r'\D', '', raw_y) if raw_y else None
             year_val = int(clean_year) if clean_year else None
-            cursor.execute(f"INSERT INTO {config.TABLE_SPECIES} (genus, species, is_type, status, clade, stage, age_ma, author, year) VALUES (?,?,?,?,?,?,?,?,?)",
-                           (row['genus'], row['species'], is_type_val, row['status'], row['clade'], row['stage'], row['age'], row['author'], year_val))
+
+            # Выполняем вставку (записываем строки True/False)
+            cursor.execute(f"""
+                INSERT INTO {config.TABLE_SPECIES} 
+                (genus, species, is_type, is_extant, status, clade, stage, age_ma, author, year) 
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (row['genus'], row['species'], is_type_val, is_extant_val, row['status'], 
+                 row['clade'], row['stage'], row['age'], row['author'], year_val))
+            
             current_progress += 1
             if not config.BRIEF_CONSOLE:
                 sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
                 sys.stdout.flush()
-            time.sleep(0.0001)
+                time.sleep(0.0001)
         logging.info(f"Species table: OK (Imported {n_species} records)")
     except Exception as e: 
         errors.append(f"Species import failed: {e}")
@@ -235,22 +246,21 @@ def build_database():
             print(f"[ERROR] {err}")
             logging.error(err)
 
-    # 5. SQL ФАЙЛ
-    try:
-        if not os.path.exists(SQL_DIR): 
-            os.makedirs(SQL_DIR, exist_ok=True)
-            logging.info(f"Created SQL directory: {SQL_DIR}")
-        query_content = f"""-- Prehistoric Fauna Library: Useful SQL Queries
-
--- Вывести всех динозавров (Научная сортировка)
-SELECT * FROM {config.TABLE_SPECIES} 
-ORDER BY genus ASC, is_type ASC, year ASC;
-"""
-        with open(SQL_FILE, 'w', encoding='utf-8') as f: 
-            f.write(query_content)
-        logging.info(f"SQL queries template created: {SQL_FILE}")
-    except Exception as e:
-        logging.error(f"SQL template creation failed: {e}")
+    # 5. SQL ФАЙЛ (из шаблона)
+    if os.path.exists(T_SQL):
+        try:
+            if not os.path.exists(SQL_DIR): os.makedirs(SQL_DIR, exist_ok=True)
+            
+            with open(T_SQL, "r", encoding="utf-8") as f:
+                sql_template = f.read()
+            
+            sql_content = sql_template.format(table_species = config.TABLE_SPECIES)
+            
+            with open(SQL_FILE, 'w', encoding='utf-8') as f: 
+                f.write(sql_content)
+            logging.info(f"SQL queries template created from file.")
+        except Exception as e:
+            logging.error(f"SQL template failed: {e}")
 
     # ФИНАЛЬНЫЙ ВЫВОД
     logging.info(f"Database saved to {DB_FILE}")

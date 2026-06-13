@@ -29,6 +29,9 @@ logging.basicConfig(
 
 logging.info("--- SCRIPT START: PIPELINE_RESEARCH ---")
 logging.info("Configuration loaded successfully from config.py")
+# [!] Фиксация активного слоя в глобальном логе
+current_layer = config.MASTER_NAME if config.IS_MASTER else config.SANDBOX_NAME
+logging.info(f"Active Research Layer: [{current_layer.upper()}]")
 
 # 5. НАСТРОЙКА ПУТЕЙ И ПАЙПЛАЙНА
 SCRIPTS_DIR = os.path.join(BASE_DIR, "research")

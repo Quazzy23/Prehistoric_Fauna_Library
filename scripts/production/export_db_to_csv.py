@@ -13,11 +13,11 @@ import config
 # --- ГЛОБАЛЬНЫЕ НАСТРОЙКИ И ПУТИ ---
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Путь к базе данных
-DB_PATH = os.path.join(BASE_DIR, "database", config.DB_NAME)
+# [!] ПРИВЯЗКА К MASTER: этот скрипт всегда выгружает основную базу
+DB_PATH = os.path.join(BASE_DIR, "database", config.MASTER_DB_NAME)
 
-# [!] УНИФИКАЦИЯ: Используем TABLES_DIR из конфига
-DATA_ROOT  = os.path.join(BASE_DIR, config.TABLES_DIR)
+# [!] ПРИВЯЗКА К MASTER: всегда сохраняем в мастер-папку для производства
+DATA_ROOT  = os.path.join(BASE_DIR, config.PROD_TABLES_DIR)
 OUTPUT_CSV = os.path.join(DATA_ROOT, "production_list.csv")
 
 # Настройки логов

@@ -29,7 +29,7 @@ LOGS_DIR = os.path.join(os.getenv('LOCALAPPDATA', ''), 'PFL_Library', 'logs')
 # [1] ГЛОБАЛЬНЫЙ РЕЖИМ ИССЛЕДОВАНИЯ (THE MASTER SWITCH)
 # Выберите группу животных, с которой хотите работать. 
 # Это влияет на выбор ссылок, имена таблиц в БД и структуру папок.
-RESEARCH_MODE = "dinosaurs" # Доступные варианты: "dinosaurs", "pterosaurs"
+RESEARCH_MODE = "dinosaurs"
 
 
 # [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING)
@@ -42,6 +42,11 @@ WIKI_SETTINGS = {
     "pterosaurs": {
         "list_url": "https://en.wikipedia.org/wiki/List_of_pterosaur_genera",
         "taxonomy_node": "Pterosauria"
+    },
+    # Новый профиль для тестов млекопитающих!
+    "mammals": {
+        "list_url": None, # Нет единого списка
+        "taxonomy_node": "Mammalia"
     }
 }
 
@@ -68,10 +73,10 @@ CREATE_CUSTOM_LIST_DIR = True
 # [4] ЛОГИКА СБОРА ДАННЫХ (FETCH SETTINGS)
 # FETCH_SYNONYMS: Собирать ли синонимы со страниц видов
 # INCLUDE_NOMINA_NUDA: Собирать ли роды без научного описания (nomen nudum).
-# EXCLUDE_UNCERTAIN_STAGES: Игнорировать сомнительные упоминания возрастов (напр. "Possible Albian")
+# INCLUDE_UNCERTAIN_STAGES: Включать ли в базу сомнительные упоминания возрастов (напр. "Possible Albian")
 FETCH_SYNONYMS = True
 INCLUDE_NOMINA_NUDA = True
-EXCLUDE_UNCERTAIN_STAGES = True
+INCLUDE_UNCERTAIN_STAGES = False
 
 
 # [5] ПРОИЗВОДИТЕЛЬНОСТЬ (PERFORMANCE)
@@ -86,27 +91,51 @@ MAX_WORKERS = 20
 DB_NAME = "prehistoric_library.sqlite"
 
 # Названия таблиц формируются динамически
-TABLE_SPECIES  = RESEARCH_MODE             # Например: "dinosaurs" или "pterosaurs"
+TABLE_SPECIES = RESEARCH_MODE             # Например: "dinosaurs" или "pterosaurs"
 TABLE_TAXONOMY = f"{RESEARCH_MODE}_taxonomy" # Например: "dinosaurs_taxonomy"
-TABLE_GEOLOGY  = "geological_time"         # Общая таблица для всех групп
+TABLE_GEOLOGY = "geological_time"         # Общая таблица для всех групп
 
+
+# [4.1] ОПРЕДЕЛЕНИЕ СЛОЯ (PRODUCTION MASTER VS SANDBOX)
+MASTER_NAME  = "master"
+SANDBOX_NAME = "sandbox"
+
+# Условие для режима MASTER (Производственный эталон)
+IS_MASTER = (USE_CUSTOM_LIST == False and
+             FETCH_SYNONYMS == True and 
+             INCLUDE_NOMINA_NUDA == True and 
+             INCLUDE_UNCERTAIN_STAGES == False)
+
+# Динамический выбор текущего слоя для Research-скриптов
+DATA_LAYER = MASTER_NAME if IS_MASTER else SANDBOX_NAME
 
 # [7] ДИНАМИЧЕСКИЕ ПУТИ К РЕЕСТРАМ (REGISTRY PATHS)
-# Папка для ваших ручных списков
 CUSTOM_LISTS_DIR = "custom_lists"
+STORAGE_BASE_NAME = "export"
 
-# Корневая папка хранилища для текущего режима
-STORAGE_BASE_NAME = "export" 
-STORAGE_ROOT = os.path.join(STORAGE_BASE_NAME, RESEARCH_MODE)
-
-# Подпапки внутри хранилища (унификация для всех скриптов)
+# --- А) ПУТИ ДЛЯ ИССЛЕДОВАНИЯ (RESEARCH) ---
+# Эти пути меняются в зависимости от флагов (master/sandbox)
+STORAGE_ROOT  = os.path.join(STORAGE_BASE_NAME, DATA_LAYER, RESEARCH_MODE)
 TABLES_DIR    = os.path.join(STORAGE_ROOT, "tables")
 SNAPSHOTS_DIR = os.path.join(STORAGE_ROOT, "snapshots")
 
-# Основные реестры (пути относительно корня проекта)
 MASTER_CATALOG   = os.path.join(STORAGE_ROOT, "species_catalog.json")
 DELETED_REGISTRY = os.path.join(STORAGE_ROOT, "deleted_registry.json")
 MIGRATIONS_FILE  = os.path.join(STORAGE_ROOT, "known_migrations.json")
+
+# --- Б) ПУТИ ДЛЯ ПРОИЗВОДСТВА (PRODUCTION) ---
+# Эти пути ВСЕГДА ведут в master, чтобы защитить реальные папки моделей
+PROD_ROOT           = os.path.join(STORAGE_BASE_NAME, MASTER_NAME, RESEARCH_MODE)
+PROD_TABLES_DIR     = os.path.join(PROD_ROOT, "tables")
+PROD_MASTER_CATALOG = os.path.join(PROD_ROOT, "species_catalog.json")
+PROD_DELETED_REG    = os.path.join(PROD_ROOT, "deleted_registry.json")
+PROD_MIGRATIONS     = os.path.join(PROD_ROOT, "known_migrations.json")
+
+# База и история (динамические)
+MASTER_DB_NAME = "prehistoric_library.sqlite"
+SANDBOX_DB_NAME = "sandbox_library.sqlite"
+DB_NAME = MASTER_DB_NAME if IS_MASTER else SANDBOX_DB_NAME
+HISTORY_FILE = "project_history.txt" if IS_MASTER else "sandbox_history.txt"
 
 
 # [8] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (SCIENTIFIC WEIGHTS)

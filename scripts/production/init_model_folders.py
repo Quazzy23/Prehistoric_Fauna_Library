@@ -15,17 +15,17 @@ import local_settings
 # [1] ПОДГОТОВКА ПУТЕЙ
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Папки моделей разделены по режимам
 MODELS_ROOT  = os.path.join(BASE_DIR, "models", config.RESEARCH_MODE)
 DELETED_ROOT = os.path.join(MODELS_ROOT, "_deleted_")
 
-# [!] УНИФИКАЦИЯ: Используем реестры из конфига
-CATALOG_PATH    = os.path.join(BASE_DIR, config.MASTER_CATALOG)
-MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
-DELETED_REG_PATH = os.path.join(BASE_DIR, config.DELETED_REGISTRY)
-TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "info_template.txt")
+# [!] ПРИВЯЗКА К MASTER: используем PROD_ пути из конфига
+CATALOG_PATH     = os.path.join(BASE_DIR, config.PROD_MASTER_CATALOG)
+MIGRATIONS_FILE  = os.path.join(BASE_DIR, config.PROD_MIGRATIONS)
+DELETED_REG_PATH = os.path.join(BASE_DIR, config.PROD_DELETED_REG)
 
 LOG_FILE      = os.path.join(config.LOGS_DIR, "init_model_folders.log")
+TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "info_template.txt")
+
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 def update_info_content(file_path, new_genus, new_species):

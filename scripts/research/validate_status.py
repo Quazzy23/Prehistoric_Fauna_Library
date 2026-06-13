@@ -66,7 +66,10 @@ def validate_species():
 
     logging.info(f"Opening data file for validation: {SOURCE_CSV}")
     with open(SOURCE_CSV, 'r', encoding='utf-8-sig') as f:
-        species_list = list(csv.DictReader(f, delimiter=';'))
+        reader = csv.DictReader(f, delimiter=';')
+        # [!] Автоматически запоминаем все колонки из входного файла
+        headers = reader.fieldnames 
+        species_list = list(reader)
 
     total = len(species_list)
     logging.info(f"Started validation for {total} species")
@@ -131,12 +134,9 @@ def validate_species():
     # Сохранение результатов
     if validated_data:
         try:
-            # [!] Полный список колонок, передаваемый по конвейеру
-            fieldnames = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year", "source_genus"]
-            
             with open(OUTPUT_CSV, 'w', newline='', encoding='utf-8-sig') as f:
-                # Убрали extrasaction='ignore', теперь любая лишняя колонка вызовет ошибку
-                writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
+                # Используем те же заголовки, что были во входном файле
+                writer = csv.DictWriter(f, fieldnames=headers, delimiter=';')
                 writer.writeheader()
                 writer.writerows(validated_data)
             

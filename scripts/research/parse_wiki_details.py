@@ -60,7 +60,7 @@ logging.basicConfig(
 BASE_WIKI_URL = config.BASE_WIKI_URL
 USER_EMAIL = local_settings.USER_EMAIL
 HEADERS = {'User-Agent': f'PrehistoricFaunaLibrary/1.0 (mailto:{USER_EMAIL})'}
-EXCLUDE_UNCERTAIN_STAGES = config.EXCLUDE_UNCERTAIN_STAGES
+INCLUDE_UNCERTAIN_STAGES = config.INCLUDE_UNCERTAIN_STAGES
 FETCH_SYNONYMS = config.FETCH_SYNONYMS
 
 MISSING_VAL = "-"
@@ -75,6 +75,7 @@ def extract_classification(infobox):
     # Находит Род, Кладу, Ma и Ярус (с поддержкой диапазонов)
     true_genus, clade, age, stage = MISSING_VAL, MISSING_VAL, MISSING_VAL, MISSING_VAL
     g_auth_raw, g_year = MISSING_VAL, MISSING_VAL
+    genus_is_extant = True # По дефолту жив
     
     # 1. Temporal Range (Исправлено для "80.5 to 72 Ma")
     temp_div = infobox.find(lambda tag: tag.name == "div" and "Temporal range" in tag.get_text())
@@ -83,7 +84,8 @@ def extract_classification(infobox):
         for noise in temp_copy.find_all(['div', 'style'], id='Timeline-row'): noise.decompose()
         for noise in temp_copy.find_all('sup'): noise.decompose()
         text = temp_copy.get_text(separator=" ", strip=True).replace("Temporal range:", "")
-        if EXCLUDE_UNCERTAIN_STAGES:
+        # Если НЕ включаем сомнительные стадии, то отрезаем их
+        if not INCLUDE_UNCERTAIN_STAGES:
             if "Possible" in text: text = text.split("Possible")[0].strip(" ,()")
         
         # Регулярка теперь понимает "to"
@@ -108,6 +110,10 @@ def extract_classification(infobox):
     for i, row in enumerate(rows):
         tds = row.find_all('td')
         if len(tds) == 2 and "Genus:" in tds[0].get_text():
+            # Проверка: есть ли крестик у рода?
+            if '†' in tds[1].get_text():
+                genus_is_extant = False
+                
             # Запасной вариант для автора/года
             genus_cell_text = tds[1].get_text(separator=" ", strip=True)
             y_match = re.findall(r'(\d{4})', genus_cell_text)
@@ -124,7 +130,7 @@ def extract_classification(infobox):
                 clade = clean_p.split()[0] if clean_p else MISSING_VAL
             break
             
-    return true_genus, clade, age, stage, g_auth_raw, g_year
+    return true_genus, clade, age, stage, g_auth_raw, g_year, genus_is_extant
 
 def clean_author_string(author_raw, genus_to_strip=None, species_to_strip=None):
     """Очистка автора: удаляет мусор, защищает Rich & Rich, обрабатывает 'emend'."""
@@ -199,9 +205,12 @@ def clean_author_string(author_raw, genus_to_strip=None, species_to_strip=None):
     
     return res if len(res) > 1 else MISSING_VAL
 
-def extract_data(element, true_genus, header_says_type):
+def extract_data(element, true_genus, header_says_type, genus_is_extant): # Добавили аргумент
     """Извлекает данные о виде. Игнорирует курсив внутри тегов <small>."""
     temp_elem = copy.copy(element)
+    
+    # [!] НОВАЯ ЛОГИКА: вид жив только если РОД жив И у вида нет крестика
+    is_extant = genus_is_extant and ('†' not in element.get_text())
     for tag in temp_elem.find_all(['abbr', 'sup', 'style']): tag.decompose()
     raw_text_full = temp_elem.get_text(separator=" ", strip=True)
 
@@ -277,7 +286,8 @@ def extract_data(element, true_genus, header_says_type):
     return {
         "genus": true_genus, "species": species_part, "author": author, 
         "year": year, "status": final_status,
-        "is_type": header_says_type or found_type_marker
+        "is_type": header_says_type or found_type_marker,
+        "is_extant": is_extant
     }
 
 def add_species_to_results(all_results, info, clade, age, stage, reports, source_genus): # Добавили аргумент
@@ -399,7 +409,7 @@ def check_and_report_historical(element, true_genus, reports):
                 logging.warning(f"{true_genus}: [MIGRATION FOUND] {name_only} -> {true_genus}")
                 reports['hist_notes'].append(f"{name_only} -> {true_genus}")
 
-def extract_synonym_data(element, true_genus):
+def extract_synonym_data(element, true_genus, genus_is_extant):
     """Извлекает синонимы. Исправлено сохранение авторов (small) и вложенные списки."""
     # 0. Подготовка
     temp_elem = copy.copy(element)
@@ -493,7 +503,8 @@ def extract_synonym_data(element, true_genus):
         "author": author_final, 
         "year": year, 
         "status": status, 
-        "is_type": False
+        "is_type": False,
+        "is_extant": genus_is_extant
     }
 
 def fetch_ancestral_taxa(genus_name, session):
@@ -573,7 +584,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
         logging.info(f"{genus}: STUB CREATED (nomen nudum - skipping Wikipedia)")
         info_stub = {
             "genus": genus, "species": MISSING_VAL, "author": MISSING_VAL, 
-            "year": MISSING_VAL, "status": "nudum"
+            "year": MISSING_VAL, "status": "nudum", "is_extant": False
         }
         add_species_to_results(all_results, info_stub, MISSING_VAL, MISSING_VAL, MISSING_VAL, reports, genus)
         return
@@ -617,7 +628,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 reports['found_as'].append(f"{genus} -> {display_name}")
                     infobox = soup.find('table', class_='infobox biota')
                     if infobox:
-                        true_genus, clade, age, stage, g_auth_raw, g_year = extract_classification(infobox)
+                        true_genus, clade, age, stage, g_auth_raw, g_year, genus_is_extant = extract_classification(infobox)
                         success = True
                         break
                     success = True
@@ -766,8 +777,8 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                         # 1. Определяем, говорит ли ЗАГОЛОВОК, что это тип
                         is_type_by_header = "type" in h_text or "binomial" in h_text
                         
-                        # 2. Вызываем экстрактор, передавая это знание
-                        info = extract_data(item, true_genus, is_type_by_header)
+                        # 2. Вызываем экстрактор, передавая это знание и статус рода
+                        info = extract_data(item, true_genus, is_type_by_header, genus_is_extant)
                         
                         if info:
                             s_name_low = info['species'].lower()
@@ -801,7 +812,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 with data_lock:
                                     current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
                                 # ------------------------------
-                                audit_buffer.append({'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'], 'meta_note': current_meta_note})
+                                audit_buffer.append({'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'is_extant': info['is_extant'], 'author': info['author'], 'year': info['year'], 'meta_note': current_meta_note})
                                 check_and_report_historical(item, true_genus, reports)
                             elif res_status == "upgraded":
                                 main_species_count += 1
@@ -811,7 +822,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                     current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
                                 # ------------------------------
                                 audit_buffer.append({
-                                    'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'author': info['author'], 'year': info['year'],
+                                    'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'is_extant': info['is_extant'], 'author': info['author'], 'year': info['year'],
                                     'upgrade_note': '(upgraded metadata)', 'meta_note': current_meta_note
                                 })
                             else:
@@ -828,7 +839,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                         li_items = data_td.find_all('li')
                         if li_items:
                             for li in li_items:
-                                s_info = extract_synonym_data(li, true_genus)
+                                s_info = extract_synonym_data(li, true_genus, genus_is_extant)
                                 if s_info:
                                     s_species = s_info['species']
                                     # Проверяем, есть ли реальное имя вида
@@ -853,7 +864,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                             # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
-                                                'status': s_info['status'], 'author': s_info['author'], 'year': s_info['year']
+                                                'status': s_info['status'], 'is_extant': s_info['is_extant'], 'author': s_info['author'], 'year': s_info['year']
                                             })
                                         elif res_status == "upgraded":
                                             syn_species_count += 1
@@ -864,7 +875,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                             # ------------------------------
                                             audit_buffer.append({
                                                 'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
-                                                'status': s_info['status'], 'author': s_info['author'], 'year': s_info['year'],
+                                                'status': s_info['status'], 'is_extant': s_info['is_extant'], 'author': s_info['author'], 'year': s_info['year'],
                                                 'upgrade_note': '(status updated)'
                                             })
                                         else:
@@ -905,9 +916,11 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                 if entry['type'] == 'MAIN':
                     display_type = True if auto_type_triggered else entry['is_type']
                     suffix = " (auto-assigned type)" if auto_type_triggered else ""
-                    line = f"{genus}: [MAIN] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(display_type)} | {f(entry['author'])} | {f(entry['year'])}{suffix}{upg}{meta_info}"
+                    # Вставили {f(entry['is_extant'])} после типа
+                    line = f"{genus}: [MAIN] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(display_type)} | {f(entry['is_extant'])} | {f(entry['author'])} | {f(entry['year'])}{suffix}{upg}{meta_info}"
                 else:
-                    line = f"{genus}: [SYNONYM] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(entry['author'])} | {f(entry['year'])}{upg}"
+                    # Вставили {f(entry['is_extant'])} после статуса
+                    line = f"{genus}: [SYNONYM] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(entry['is_extant'])} | {f(entry['author'])} | {f(entry['year'])}{upg}"
                 logging.info(line)
             else:
                 logging.info(entry)
@@ -1080,7 +1093,7 @@ def start_mass_parsing():
     # УДАЛИЛИ RETURN: Теперь функция просто завершается
 
 def save_to_csv(all_results, filename):
-    keys = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year", "source_genus"]
+    keys = ["genus", "species", "status", "is_type", "is_extant", "clade", "stage", "age", "author", "year", "source_genus"]
     try:
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, 'w', newline='', encoding='utf-8-sig') as f:

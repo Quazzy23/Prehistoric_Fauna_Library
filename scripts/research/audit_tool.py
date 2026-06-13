@@ -17,7 +17,8 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FINAL_CSV = os.path.join(BASE_DIR, config.TABLES_DIR, "final_fauna.csv")
 SNAPSHOT_DIR= os.path.join(BASE_DIR, config.SNAPSHOTS_DIR)
 DELETED_REGISTRY = os.path.join(BASE_DIR, config.DELETED_REGISTRY)
-HISTORY_FILE = os.path.join(BASE_DIR, "project_history.txt")
+# Берем путь к истории динамически из конфига
+HISTORY_FILE = os.path.join(BASE_DIR, config.HISTORY_FILE)
 
 # Настройка логов (Берем путь строго из config.py)
 LOG_FILE = os.path.join(config.LOGS_DIR, "audit_tool.log")
@@ -80,7 +81,15 @@ def run_final_audit():
     report = {'NEW': [], 'UPDATED': [], 'LOST': [], 'RESURRECTED': []}
 
     with open(FINAL_CSV, 'r', encoding='utf-8-sig') as f:
-        rows = list(csv.DictReader(f, delimiter=';'))
+        reader = csv.DictReader(f, delimiter=';')
+        # [!] Запоминаем все колонки из файла
+        cols = reader.fieldnames
+        rows = list(reader)
+
+    # Список системных колонок, которые НЕ идут в "паспорт" данных
+    sys_cols = ["genus", "species", "source_genus"]
+    # Колонки, которые относятся к Роду (DATA)
+    genus_attr = ["clade", "age", "stage"]
     
     total_rows = len(rows)
     logger.info(f"Detected {total_rows} species in {source_name}")
@@ -96,7 +105,7 @@ def run_final_audit():
         
         # --- А) ОБРАБОТКА ДАННЫХ СТРАНИЦЫ (DATA) ---
         data_key = f"DATA:{page}"
-        data_val = f"{row['clade']} | {row['age']} | {row['stage']}"
+        data_val = " | ".join([row[c] for c in genus_attr if c in row])
         current_facts[data_key] = data_val
         
         if data_key not in handled_data_keys_in_this_run:
@@ -126,8 +135,13 @@ def run_final_audit():
             handled_data_keys_in_this_run.add(data_key)
 
         # --- Б) ОБРАБОТКА ВИДА (SPECIES) ---
+        # Сначала собираем "паспорт" из всех колонок, которые не системные и не принадлежат Роду
+        # Сюда автоматически попадут: status, is_type, is_extant, author, year
+        species_info_list = [row[c] for c in cols if c not in sys_cols and c not in genus_attr]
+
+        # Ключ и итоговое значение (с страницей-источником в конце для LOST)
         s_key = f"SPECIES:{g}:{s}"
-        s_val = f"{row['status']} | {row['is_type']} | {row['author']} | {row['year']} | {page}"
+        s_val = " | ".join(species_info_list + [page])
         current_facts[s_key] = s_val
         seen_in_this_session.add(s_key)
         
@@ -137,21 +151,26 @@ def run_final_audit():
         if old_s_v == s_val:
             logger.info(f"[OK] {s_key}: {s_val}")
         elif old_s_v is not None:
-            clean_msg = f"{s_key}: {old_s_v} -> {s_val}"
+            # Убираем последний элемент (страницу) из обеих строк для вывода
+            old_v_clean = " | ".join(old_s_v.split(" | ")[:-1])
+            new_v_clean = " | ".join(s_val.split(" | ")[:-1])
+            clean_msg = f"{s_key}: {old_v_clean} -> {new_v_clean}"
             report['UPDATED'].append(clean_msg); logger.warning(f"[UPDATED] {clean_msg}")
         else:
             # NEW или RESURRECTED или INIT для Вида
             is_res = False
             if full_name in deleted_registry:
-                clean_msg = f"{full_name}: {s_val}"
+                # Отрезаем страницу для лога
+                v_clean = " | ".join(s_val.split(" | ")[:-1])
+                clean_msg = f"{full_name}: {v_clean}"
                 report['RESURRECTED'].append(clean_msg); logger.warning(f"[RESURRECTED] {clean_msg}")
                 deleted_registry.remove(full_name); is_res = True # [!] Исправлено для списка
             
             if not is_res:
-                if is_first_run:
-                    logger.info(f"[INIT] {s_key}: {s_val}")
+                v_clean = " | ".join(s_val.split(" | ")[:-1])
+                if is_first_run: logger.info(f"[INIT] {s_key}: {v_clean}")
                 else:
-                    clean_msg = f"{s_key}: {s_val}"
+                    clean_msg = f"{s_key}: {v_clean}"
                     report['NEW'].append(clean_msg); logger.warning(f"[NEW] {clean_msg}")
 
     # [5] ОБРАБОТКА ПРОПАВШИХ (Иерархический вывод в порядке снапшота)

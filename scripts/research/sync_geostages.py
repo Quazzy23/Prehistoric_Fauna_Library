@@ -80,7 +80,10 @@ def sync_stages():
 
     logging.info(f"Opening validated data for syncing: {SOURCE_CSV}")
     with open(SOURCE_CSV, 'r', encoding='utf-8-sig') as f:
-        reader = list(csv.DictReader(f, delimiter=';'))
+        csv_reader = csv.DictReader(f, delimiter=';')
+        # [!] Запоминаем заголовки автоматически
+        headers = csv_reader.fieldnames
+        reader = list(csv_reader)
     
     total = len(reader)
     logging.info(f"Started synchronization for {total} species")
@@ -219,12 +222,9 @@ def sync_stages():
     # Сохранение
     if final_data:
         try:
-            # [!] Финальный набор колонок для Аудита и Базы
-            fieldnames = ["genus", "species", "status", "is_type", "clade", "stage", "age", "author", "year", "source_genus"]
-            
             with open(FINAL_CSV, 'w', newline='', encoding='utf-8-sig') as f:
-                # Любое отклонение от fieldnames остановит конвейер
-                writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
+                # Используем захваченные заголовки (headers)
+                writer = csv.DictWriter(f, fieldnames=headers, delimiter=';')
                 writer.writeheader()
                 writer.writerows(final_data)
             

@@ -124,54 +124,50 @@ def collect_genera():
             logging.error(f"Filter error: custom list {config.CUSTOM_LIST_NAME} not found!")
     else:
         logging.info("Filter inactive: using all found genera")
-    logging.info(f"Connecting to: {WIKI_LIST_URL}")
-    
-    try:
-        response = requests.get(WIKI_LIST_URL, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-        full_html = response.text
-        total_bytes = len(response.content)
-        logging.info("Successfully connected to Wikipedia")
-    except Exception as e:
-        msg = f"Connection error: {e}"
-        logging.error(msg)
-        print(f"[ERROR] {msg}")
-        return
 
-    # Обрезка страницы
-    start_pos = full_html.find('id="A"')
-    end_pos = full_html.find('id="See_also"')
-    content_chunk = full_html[start_pos:end_pos] if start_pos != -1 and end_pos != -1 else full_html
-
-    # Разделение по <li>
-    li_blocks = content_chunk.split('<li>')
-    # Убираем пустые блоки
-    li_blocks = [b for b in li_blocks if b.strip()]
-    
-    total_blocks = len(li_blocks)
-    logging.info(f"Detected {total_blocks} potential entries in A-Z list")
-    logging.info(f"Started processing {total_blocks} blocks")
-    
-    genera_data = [] # Список словарей для CSV
-    excluded_log = [] 
-    # Списки для детального аудита
-    report_synonyms, report_nudums, report_reclassified, report_preoccupied, report_others = [], [], [], [], []
+    # Инициализация всех списков и счетчиков
+    genera_data = []
+    excluded_log, report_duplicates =[], []
+    report_synonyms, report_nudums, report_preoccupied, report_others = [],[], [],[]
+    c_dup, c_syn, c_nud, c_pre, c_oth = 0, 0, 0, 0, 0
+    total_bytes = 0
+    li_blocks =[]
     
     excluded_keywords = {"Contents", "Dinosaur", "List", "Wikipedia", "The", "From", "Category", "File", "Portal", "Special"}
     pattern = r'(?:<i>|\")(?:<a[^>]*>)?([A-Z][a-z]+)'
-    
-    genera_data = [] # Список словарей для CSV
-    excluded_log = [] 
 
-    # Списки для детального аудита
-    report_duplicates = [] # Заменили excluded_log на это
-    report_synonyms = []
-    report_nudums = []
-    report_preoccupied = []
-    report_others = [] 
-
-    # Счетчики для консоли
-    c_dup, c_syn, c_nud, c_pre, c_oth = 0, 0, 0, 0, 0
+    # [!] НОВАЯ ЛОГИКА: Если URL нет, просто доверяем кастомному списку
+    if not WIKI_LIST_URL:
+        if not genus_filter:
+            print("[ERROR] WIKI_LIST_URL is None and no custom list provided.")
+            return
+        logging.info("No Wikipedia list URL. Using custom list directly.")
+        for name in genus_filter:
+            genera_data.append({"genus": name.capitalize(), "status": "valid"})
+            logging.info(f"{name.capitalize()}: OK")
+    else:
+        # ОБЫЧНАЯ ЛОГИКА ДИНОЗАВРОВ
+        logging.info(f"Connecting to: {WIKI_LIST_URL}")
+        try:
+            response = requests.get(WIKI_LIST_URL, headers=HEADERS, timeout=15)
+            response.raise_for_status()
+            full_html = response.text
+            total_bytes = len(response.content)
+            logging.info("Successfully connected to Wikipedia")
+            
+            start_pos = full_html.find('id="A"')
+            end_pos = full_html.find('id="See_also"')
+            content_chunk = full_html[start_pos:end_pos] if start_pos != -1 and end_pos != -1 else full_html
+            li_blocks =[b for b in content_chunk.split('<li>') if b.strip()]
+            
+            total_blocks = len(li_blocks)
+            logging.info(f"Detected {total_blocks} potential entries in A-Z list")
+            logging.info(f"Started processing {total_blocks} blocks")
+        except Exception as e:
+            msg = f"Connection error: {e}"
+            logging.error(msg)
+            print(f"[ERROR] {msg}")
+            return
     
     for block in li_blocks:
         if not block.strip(): continue

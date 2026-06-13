@@ -13,16 +13,15 @@ import config
 # [1] ПОДГОТОВКА ПУТЕЙ
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# Входная таблица из папки текущего режима
-INPUT_CSV = os.path.join(BASE_DIR, config.TABLES_DIR, "production_list.csv")
+# [!] ПРИВЯЗКА К MASTER: используем PROD_ пути из конфига
+INPUT_CSV = os.path.join(BASE_DIR, config.PROD_TABLES_DIR, "production_list.csv")
 
-# Реестры (динамически строятся из путей в config.py)
-CATALOG_PATH = os.path.join(BASE_DIR, config.MASTER_CATALOG)
-MIGRATIONS_FILE = os.path.join(BASE_DIR, config.MIGRATIONS_FILE)
+CATALOG_PATH    = os.path.join(BASE_DIR, config.PROD_MASTER_CATALOG)
+MIGRATIONS_FILE = os.path.join(BASE_DIR, config.PROD_MIGRATIONS)
+
+LOG_FILE = os.path.join(config.LOGS_DIR, "init_catalog.log")
 TEMPLATE_PATH = os.path.join(BASE_DIR, "templates", "info_template.txt")
 
-# Настройка логов (Берем путь строго из config.py)
-LOG_FILE = os.path.join(config.LOGS_DIR, "init_catalog.log")
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
 def init_catalog():
