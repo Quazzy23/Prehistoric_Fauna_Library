@@ -32,20 +32,23 @@ LOGS_DIR = os.path.join(os.getenv('LOCALAPPDATA', ''), 'PFL_Library', 'logs')
 RESEARCH_MODE = "dinosaurs"
 
 
-# [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING)
-# Конфигурация для разных типов фауны
+# [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING: CLADE TREE CRAWLER)
+# start_url — верхняя граница (откуда начинаем обход)
+# stop_url  — нижняя граница (ссылка, на которой останавливаемся и не идем вглубь)
 WIKI_SETTINGS = {
     "dinosaurs": {
-        "list_url": "https://en.wikipedia.org/wiki/List_of_dinosaur_genera",
+        "start_url": "https://en.wikipedia.org/wiki/Dinosauromorpha",
+        "stop_url": "https://en.wikipedia.org/wiki/Avialae",
         "taxonomy_node": "Dinosauromorpha"
     },
     "pterosaurs": {
-        "list_url": "https://en.wikipedia.org/wiki/List_of_pterosaur_genera",
+        "start_url": "https://en.wikipedia.org/wiki/Pterosauria",
+        "stop_url": None,
         "taxonomy_node": "Pterosauria"
     },
-    # Новый профиль для тестов млекопитающих!
     "mammals": {
-        "list_url": None, # Нет единого списка
+        "start_url": "https://en.wikipedia.org/wiki/Mammalia",
+        "stop_url": None,
         "taxonomy_node": "Mammalia"
     }
 }
@@ -53,30 +56,40 @@ WIKI_SETTINGS = {
 # Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
 _current = WIKI_SETTINGS.get(RESEARCH_MODE, WIKI_SETTINGS["dinosaurs"])
 
-WIKI_LIST_URL = _current["list_url"]
+WIKI_START_URL = _current.get("start_url")
+WIKI_STOP_URL = _current.get("stop_url")
 TAXONOMY_START_NODE = _current["taxonomy_node"]
+
 BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
 GEO_WIKI_URL = "https://en.wikipedia.org/wiki/Geologic_time_scale"
 
 
-# [3] ИСТОЧНИКИ ДАННЫХ (DATA INPUT)
-# USE_CUSTOM_LIST: Откуда скрипт берет список родов для глубокого парсинга:
-# True  — из вашего файла в папке /data/custom_lists/ (например, для тестов)
-# False — из общего списка Wikipedia (сгенерированного первым скриптом)
-USE_CUSTOM_LIST = True
+# [3] ОПРЕДЕЛЕНИЕ СЛОЯ (THE MASTER LAYER SWITCH)
+# True  — РЕЖИМ MASTER (Производственный эталон).
+# False — РЕЖИМ SANDBOX (Песочница).
+IS_MASTER = True
+
+MASTER_NAME  = "master"
+SANDBOX_NAME = "sandbox"
+DATA_LAYER   = MASTER_NAME if IS_MASTER else SANDBOX_NAME
+
+
+# [4] ЛОГИКА СБОРА И ИСТОЧНИКИ ДАННЫХ (DATA INPUT & FETCH SETTINGS)
+if IS_MASTER:
+    # --- АВТОМАТИЧЕСКИЕ НАСТРОЙКИ ДЛЯ MASTER (НЕЛЬЗЯ СЛОМАТЬ) ---
+    USE_CUSTOM_LIST          = False  # Только полный обход дерева
+    FETCH_SYNONYMS           = True   # Сбор всех синонимов обязателен
+    INCLUDE_NOMINA_NUDA      = True   # Сбор нудумов обязателен
+    INCLUDE_UNCERTAIN_STAGES = False  # Только твердо установленные ярусы
+else:
+    # --- СВОБОДНЫЕ НАСТРОЙКИ ДЛЯ SANDBOX (МЕНЯЙТЕ ДЛЯ ТЕСТОВ) ---
+    USE_CUSTOM_LIST          = False  # True — тест по файлу из custom_lists/
+    FETCH_SYNONYMS           = True   # False — быстрый тест без синонимов
+    INCLUDE_NOMINA_NUDA      = True   # False — исключить нудумы
+    INCLUDE_UNCERTAIN_STAGES = False  # True — включать "Possible Albian"
+
 CUSTOM_LIST_NAME = "sample_genera.txt"
-
-# Автоматически создавать папку /data/custom_lists/ и файл-образцы
 CREATE_CUSTOM_LIST_DIR = True
-
-
-# [4] ЛОГИКА СБОРА ДАННЫХ (FETCH SETTINGS)
-# FETCH_SYNONYMS: Собирать ли синонимы со страниц видов
-# INCLUDE_NOMINA_NUDA: Собирать ли роды без научного описания (nomen nudum).
-# INCLUDE_UNCERTAIN_STAGES: Включать ли в базу сомнительные упоминания возрастов (напр. "Possible Albian")
-FETCH_SYNONYMS = True
-INCLUDE_NOMINA_NUDA = True
-INCLUDE_UNCERTAIN_STAGES = False
 
 
 # [5] ПРОИЗВОДИТЕЛЬНОСТЬ (PERFORMANCE)
@@ -95,19 +108,6 @@ TABLE_SPECIES = RESEARCH_MODE             # Например: "dinosaurs" или
 TABLE_TAXONOMY = f"{RESEARCH_MODE}_taxonomy" # Например: "dinosaurs_taxonomy"
 TABLE_GEOLOGY = "geological_time"         # Общая таблица для всех групп
 
-
-# [4.1] ОПРЕДЕЛЕНИЕ СЛОЯ (PRODUCTION MASTER VS SANDBOX)
-MASTER_NAME  = "master"
-SANDBOX_NAME = "sandbox"
-
-# Условие для режима MASTER (Производственный эталон)
-IS_MASTER = (USE_CUSTOM_LIST == False and
-             FETCH_SYNONYMS == True and 
-             INCLUDE_NOMINA_NUDA == True and 
-             INCLUDE_UNCERTAIN_STAGES == False)
-
-# Динамический выбор текущего слоя для Research-скриптов
-DATA_LAYER = MASTER_NAME if IS_MASTER else SANDBOX_NAME
 
 # [7] ДИНАМИЧЕСКИЕ ПУТИ К РЕЕСТРАМ (REGISTRY PATHS)
 CUSTOM_LISTS_DIR = "custom_lists"

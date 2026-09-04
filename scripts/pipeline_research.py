@@ -40,7 +40,6 @@ PIPELINE = [
     "fetch_genera_list.py",        # 1. Список родов
     "fetch_geochronology.py",      # 2. Шкала ICS
     "parse_wiki_details.py",       # 3. Парсинг Википедии
-    "validate_status.py",          # 4. Валидация статусов
     "sync_geostages.py",           # 5. Синхронизация времени
     "audit_tool.py",               # 6. ФИНАЛЬНЫЙ ИНСПЕКТОР (Новое место)
     "build_db.py"                  # 7. Заливка в SQLite

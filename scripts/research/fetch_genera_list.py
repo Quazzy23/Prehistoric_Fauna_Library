@@ -1,327 +1,426 @@
 import sys
-sys.dont_write_bytecode = True  # Сначала запрещаем
-import requests
+sys.dont_write_bytecode = True
+
 import os
 import re
+import copy
 import time
 import logging
 import csv
-# Добавляем путь к папке scripts, чтобы увидеть config.py
+import threading
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 import local_settings
-sys.dont_write_bytecode = True
 
 # --- ПУТИ И НАСТРОЙКИ ---
-WIKI_LIST_URL = config.WIKI_LIST_URL
-USER_EMAIL = local_settings.USER_EMAIL
-
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# [!] УНИФИКАЦИЯ: Берем путь к таблицам из конфига
 GENERA_CSV = os.path.join(BASE_DIR, config.TABLES_DIR, "genera_list.csv")
-
 CUSTOM_LIST_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, config.CUSTOM_LIST_NAME)
 SAMPLE_LIST_PATH = os.path.join(BASE_DIR, config.CUSTOM_LISTS_DIR, "sample_genera.txt")
 
-# Настройка логов (Берем путь строго из config.py)
 LOG_FILE = os.path.join(config.LOGS_DIR, "fetch_genera_list.log")
 os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 
-MISSING_VAL = "-"
+logger = logging.getLogger("fetch_genera_list")
+logger.setLevel(logging.INFO)
+if logger.hasHandlers():
+    logger.handlers.clear()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    filename=LOG_FILE,
-    filemode='w',
-    encoding='utf-8'
-)
+file_handler = logging.FileHandler(LOG_FILE, mode='w', encoding='utf-8')
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+logger.addHandler(file_handler)
 
+USER_EMAIL = getattr(local_settings, 'USER_EMAIL', 'researcher@pfl-project.org')
 HEADERS = {
-    'User-Agent': f'PrehistoricFaunaLibraryCollector/1.0 (mailto:{USER_EMAIL})'
+    'User-Agent': f'PrehistoricFaunaLibraryCollector/2.0 (mailto:{USER_EMAIL})'
 }
 
-def get_all_statuses(text):
-    """Находит все возможные статусы в пояснении."""
-    text = text.lower().strip()
-    if not text:
-        return ["valid"]
+BASE_WIKI_URL = "https://en.wikipedia.org"
+START_PAGE = getattr(config, 'WIKI_START_URL', "https://en.wikipedia.org/wiki/Dinosauromorpha")
+STOP_PAGE = getattr(config, 'WIKI_STOP_URL', None)
 
-    found_matches = []
+USE_PARALLEL = config.USE_PARALLEL
+MAX_WORKERS = config.MAX_WORKERS if USE_PARALLEL else 1
 
-    # 2. Приоритет: Технические ошибки (Preoccupied)
-    if "preoccupied" in text:
-        found_matches.append("preoccupied")
+# Потокобезопасные хранилища
+visited_lock = threading.Lock()
+log_lock = threading.Lock()
 
-    # 3. Приоритет: Синонимы
-    if "synonym" in text or "now known as" in text:
-        found_matches.append("synonym")
+visited_urls = set()
+all_discovered_genera = set()
+total_pages_visited = 0
+total_bytes_downloaded = 0
 
-    # 4. Приоритет: Nomen nudum
-    if "nomen nudum" in text or "nudum" in text:
-        found_matches.append("nudum")
 
-    # 5. Приоритет: Dubious / Chimaera
-    if "dubium" in text or "doubtful" in text:
-        found_matches.append("dubious")
-    if "chimaera" in text:
-        found_matches.append("chimaera")
+def is_stop_boundary(url):
+    """Проверяет нижнюю границу остановки по URL."""
+    if not STOP_PAGE or not url:
+        return False
+    target_slug = urlparse(STOP_PAGE).path.strip('/').split('/')[-1].lower()
+    current_slug = urlparse(url).path.strip('/').split('/')[-1].lower()
+    return target_slug == current_slug
 
-    if not found_matches:
-        return ["valid"]
-        
-    return found_matches
+
+def clean_item_for_analysis(li_tag):
+    """Изолирует строку: удаляет подсписки, сноски [1] и авторов (<small>, font-size)."""
+    item = copy.copy(li_tag)
+    for nested in item.find_all(['ul', 'ol', 'table', 'sup', 'small']):
+        nested.decompose()
+    for span in item.find_all('span'):
+        if 'font-size' in span.get('style', ''):
+            span.decompose()
+    return item
+
+
+def parse_genus_name(li_tag):
+    """Извлекает только имя рода (курсив <i> или кавычки)."""
+    item = clean_item_for_analysis(li_tag)
+
+    full_li_text = item.get_text(separator=" ", strip=True)
+    italic_tag = item.find('i')
+    has_quotes = '"' in full_li_text or '“' in full_li_text
+
+    if not italic_tag and not has_quotes:
+        return None
+
+    genus_link = item.find('a')
+    if genus_link:
+        raw_name = genus_link.get_text(strip=True)
+    elif italic_tag:
+        raw_name = italic_tag.get_text(strip=True)
+    else:
+        match = re.search(r'["“]([A-Z][a-z]+)["”]', full_li_text)
+        raw_name = match.group(1) if match else None
+
+    if not raw_name:
+        return None
+
+    genus_name = raw_name.replace('†', '').replace('?', '').replace('"', '').replace('“', '').replace('”', '').strip()
+    if not genus_name or not genus_name[0].isupper() or len(genus_name.split()) > 1:
+        genus_name = genus_name.split()[0] if genus_name else None
+
+    return genus_name
+
+
+def parse_clade_item(li_tag):
+    """Определяет кладу со ссылкой или без."""
+    item = clean_item_for_analysis(li_tag)
+
+    full_li_text = item.get_text(separator=" ", strip=True)
+    if item.find('i') or '"' in full_li_text or '“' in full_li_text:
+        return None, None
+
+    # 1. Клада с <b>
+    bold = item.find('b')
+    if bold:
+        link = bold.find('a') or bold.find_parent('a')
+        if link and link.get('href'):
+            href = link['href'].strip()
+            if not href.startswith('#') and 'redlink=1' not in href and 'action=edit' not in href:
+                full_url = urljoin(BASE_WIKI_URL, href)
+                clade_name = link.get_text(strip=True).replace('†', '').strip()
+
+                if is_stop_boundary(full_url):
+                    return 'STOP', (clade_name, full_url)
+
+                return 'LINK', (clade_name, full_url)
+
+        clade_name = bold.get_text(strip=True).replace('†', '').strip()
+        if clade_name:
+            return 'NO_LINK', clade_name
+        return None, None
+
+    # 2. Клада БЕЗ <b>
+    link = item.find('a')
+    if link and link.get('href'):
+        href = link['href'].strip()
+        if not href.startswith('#') and 'redlink=1' not in href and 'action=edit' not in href:
+            clade_name = link.get_text(strip=True).replace('†', '').strip()
+            full_url = urljoin(BASE_WIKI_URL, href)
+
+            if is_stop_boundary(full_url):
+                return 'STOP', (clade_name, full_url)
+
+            if clade_name and clade_name[0].isupper() and not re.search(r'\d', clade_name):
+                bad_words = ["extinct", "details", "see also"]
+                if clade_name.lower() not in bad_words:
+                    return 'LINK', (clade_name, full_url)
+
+    return None, None
+
+
+def find_taxa_section_by_layout(infobox):
+    """Поиск блока списка чисто по верстке."""
+    ignored_headers = ["scientific classification", "synonyms", "type species", "type genus", "temporal range"]
+
+    for tr in infobox.find_all('tr'):
+        th = tr.find('th')
+        if th and th.get('colspan') == '2':
+            header_text = th.get_text(strip=True).lower()
+            if any(ign in header_text for ign in ignored_headers):
+                continue
+
+            next_tr = tr.find_next_sibling('tr')
+            if next_tr:
+                td = next_tr.find('td')
+                if td and td.find(['ul', 'ol']):
+                    return td
+    return None
+
+
+def process_taxa_list(list_element, found_genera, new_branches, log_buffer):
+    """
+    Разбор списка по Идее 1 (делегирование):
+    Вложенные списки у ссылочных клад игнорируются, у NO_LINK — раскрываются.
+    """
+    direct_items = list_element.find_all('li', recursive=False)
+
+    for li in direct_items:
+        g_name = parse_genus_name(li)
+        if g_name:
+            found_genera.append(g_name)
+            log_buffer.append(('INFO', f"GENUS: {g_name}"))
+            continue
+
+        action, clade_data = parse_clade_item(li)
+
+        if action == 'STOP':
+            clade_name, branch_url = clade_data
+            log_buffer.append(('WARNING', f"CLADE (BOUNDARY STOP): {clade_name} ({branch_url})"))
+            continue
+
+        elif action == 'LINK':
+            clade_name, branch_url = clade_data
+            new_branches.append((clade_name, branch_url))
+            continue
+
+        elif action == 'NO_LINK':
+            clade_name = clade_data
+            log_buffer.append(('INFO', f"CLADE (NO LINK): {clade_name}"))
+            for nested_list in li.find_all(['ul', 'ol'], recursive=False):
+                process_taxa_list(nested_list, found_genera, new_branches, log_buffer)
+            continue
+
+
+def process_single_page(current_url, session):
+    """
+    Многопоточный обработчик одной страницы:
+    Возвращает найденные роды, новые ссылки и атомарный лог.
+    """
+    global total_bytes_downloaded
+    page_title = current_url.split("/")[-1].replace("_", " ")
+
+    found_genera = []
+    new_branches = []
+    log_buffer = [('INFO', f"PAGE START: {page_title} ({current_url})")]
+
+    try:
+        resp = session.get(current_url, timeout=12)
+        resp.raise_for_status()
+        with visited_lock:
+            total_bytes_downloaded += len(resp.content)
+    except Exception as e:
+        log_buffer.append(('ERROR', f"Failed to fetch {current_url}: {e}"))
+        return found_genera, new_branches, log_buffer
+
+    try:
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        infobox = soup.find('table', class_='infobox biota')
+        if not infobox:
+            return found_genera, new_branches, log_buffer
+
+        subgroups_td = find_taxa_section_by_layout(infobox)
+        if not subgroups_td:
+            return found_genera, new_branches, log_buffer
+
+        collapsible_tables = subgroups_td.find_all('table', class_='mw-collapsible')
+
+        # 1. Основные списки
+        root_lists = [
+            elem for elem in subgroups_td.find_all(['ul', 'ol'])
+            if not elem.find_parent('li') and not any(tbl in elem.parents for tbl in collapsible_tables)
+        ]
+        for root_list in root_lists:
+            process_taxa_list(root_list, found_genera, new_branches, log_buffer)
+
+        # 2. Свернутые таблицы (Possible)
+        for col_table in collapsible_tables:
+            header_div = col_table.find('th')
+            header_title = header_div.get_text(strip=True) if header_div else "Possible taxa"
+            log_buffer.append(('INFO', f"POSSIBLE: {header_title} ({current_url})"))
+
+            col_root_lists = [
+                elem for elem in col_table.find_all(['ul', 'ol'])
+                if not elem.find_parent('li')
+            ]
+            for col_list in col_root_lists:
+                process_taxa_list(col_list, found_genera, new_branches, log_buffer)
+
+    except Exception as e:
+        log_buffer.append(('ERROR', f"Error parsing {current_url}: {e}"))
+
+    return found_genera, new_branches, log_buffer
+
 
 def collect_genera():
-    logging.info("--- SCRIPT START: FETCH_GENERA_LIST ---")
-    if config:
-        logging.info("Configuration loaded successfully")
-    else:
-        logging.error("Configuration loading failed")
+    """Точка входа скрипта fetch_genera_list."""
+    global total_pages_visited
+
     if config.BRIEF_CONSOLE:
         print("FETCH_GENERA_LIST...", end=" ", flush=True)
     else:
         print("Starting script: FETCH_GENERA_LIST")
 
-    # Проверка и создание структуры кастомных списков
+    logger.info("--- SCRIPT START: FETCH_GENERA_LIST ---")
+    logger.info("Configuration loaded successfully from config.py")
+    logger.info(f"Upper Root Boundary: {START_PAGE}")
+    logger.info(f"Lower Stop Boundary: {STOP_PAGE if STOP_PAGE else 'None'}")
+    logger.info(f"Execution Mode: {'PARALLEL (Workers: ' + str(MAX_WORKERS) + ')' if USE_PARALLEL else 'SINGLE-THREADED'}")
+
+    # 1. Инициализация образца
     if config.CREATE_CUSTOM_LIST_DIR:
         custom_dir = os.path.dirname(SAMPLE_LIST_PATH)
-        
-        # 1. Сначала проверяем/создаем папку
         if not os.path.exists(custom_dir):
-            try:
-                os.makedirs(custom_dir, exist_ok=True)
-                logging.info(f"Created custom lists directory: {custom_dir}")
-            except Exception as e:
-                logging.error(f"Failed to create directory {custom_dir}: {e}")
-        
-        # 2. Теперь проверяем файл-образец (Sample)
-        if os.path.exists(SAMPLE_LIST_PATH):
-            logging.info(f"Custom lists sample file already exists: {SAMPLE_LIST_PATH}")
-        else:
+            os.makedirs(custom_dir, exist_ok=True)
+        if not os.path.exists(SAMPLE_LIST_PATH):
             sample_genera = [
-                "Aardonyx", "Triceratops", "Tyrannosaurus", "Cryptarcus", 
-                "Obelignathus", "Spinosaurus", "Citipes", "Allosaurus", 
+                "Aardonyx", "Triceratops", "Tyrannosaurus", "Cryptarcus",
+                "Obelignathus", "Spinosaurus", "Citipes", "Allosaurus",
                 "Brontosaurus", "Velociraptor"
             ]
-            try:
-                with open(SAMPLE_LIST_PATH, 'w', encoding='utf-8') as f:
-                    f.write("\n".join(sample_genera))
-                logging.info(f"Created sample list file: {os.path.abspath(SAMPLE_LIST_PATH)}")
-            except Exception as e:
-                logging.error(f"Failed to create sample list: {e}")
+            with open(SAMPLE_LIST_PATH, 'w', encoding='utf-8') as f:
+                f.write("\n".join(sample_genera))
 
-    # [!] ЗАГРУЗКА КАСТОМНОГО ФИЛЬТРА
+    # 2. Кастомный фильтр
     genus_filter = set()
     if config.USE_CUSTOM_LIST:
         if os.path.exists(CUSTOM_LIST_PATH):
             with open(CUSTOM_LIST_PATH, 'r', encoding='utf-8') as f:
                 genus_filter = {line.strip().lower() for line in f if line.strip()}
-            logging.info(f"Filter active: using {config.CUSTOM_LIST_NAME} as whitelist ({len(genus_filter)} names)")
-        else:
-            logging.error(f"Filter error: custom list {config.CUSTOM_LIST_NAME} not found!")
+            logger.info(f"Filter active: using {config.CUSTOM_LIST_NAME} as whitelist ({len(genus_filter)} names)")
+
+    # 3. Настройка HTTP-пула соединений (Keep-Alive)
+    session = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=MAX_WORKERS, pool_maxsize=MAX_WORKERS)
+    session.mount('https://', adapter)
+    session.headers.update(HEADERS)
+
+    # 4. Асинхронный обход дерева через ThreadPool
+    if not START_PAGE and config.USE_CUSTOM_LIST and genus_filter:
+        for name in sorted(genus_filter):
+            all_discovered_genera.add(name.capitalize())
     else:
-        logging.info("Filter inactive: using all found genera")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            visited_urls.add(START_PAGE)
+            futures = {executor.submit(process_single_page, START_PAGE, session): START_PAGE}
 
-    # Инициализация всех списков и счетчиков
-    genera_data = []
-    excluded_log, report_duplicates =[], []
-    report_synonyms, report_nudums, report_preoccupied, report_others = [],[], [],[]
-    c_dup, c_syn, c_nud, c_pre, c_oth = 0, 0, 0, 0, 0
-    total_bytes = 0
-    li_blocks =[]
-    
-    excluded_keywords = {"Contents", "Dinosaur", "List", "Wikipedia", "The", "From", "Category", "File", "Portal", "Special"}
-    pattern = r'(?:<i>|\")(?:<a[^>]*>)?([A-Z][a-z]+)'
+            while futures:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
 
-    # [!] НОВАЯ ЛОГИКА: Если URL нет, просто доверяем кастомному списку
-    if not WIKI_LIST_URL:
-        if not genus_filter:
-            print("[ERROR] WIKI_LIST_URL is None and no custom list provided.")
-            return
-        logging.info("No Wikipedia list URL. Using custom list directly.")
-        for name in genus_filter:
-            genera_data.append({"genus": name.capitalize(), "status": "valid"})
-            logging.info(f"{name.capitalize()}: OK")
-    else:
-        # ОБЫЧНАЯ ЛОГИКА ДИНОЗАВРОВ
-        logging.info(f"Connecting to: {WIKI_LIST_URL}")
-        try:
-            response = requests.get(WIKI_LIST_URL, headers=HEADERS, timeout=15)
-            response.raise_for_status()
-            full_html = response.text
-            total_bytes = len(response.content)
-            logging.info("Successfully connected to Wikipedia")
-            
-            start_pos = full_html.find('id="A"')
-            end_pos = full_html.find('id="See_also"')
-            content_chunk = full_html[start_pos:end_pos] if start_pos != -1 and end_pos != -1 else full_html
-            li_blocks =[b for b in content_chunk.split('<li>') if b.strip()]
-            
-            total_blocks = len(li_blocks)
-            logging.info(f"Detected {total_blocks} potential entries in A-Z list")
-            logging.info(f"Started processing {total_blocks} blocks")
-        except Exception as e:
-            msg = f"Connection error: {e}"
-            logging.error(msg)
-            print(f"[ERROR] {msg}")
-            return
-    
-    for block in li_blocks:
-        if not block.strip(): continue
-            
-        # Режем блок при первом же признаке конца строки или начала нового элемента (картинки, списка)
-        actual_content = re.split(r'</li>|</ul|<figure|<ul|<h|<div|<p', block, flags=re.IGNORECASE)[0]
-        match = re.search(pattern, actual_content)
-        
-        if match:
-            name = match.group(1)
-            # [!] ФИЛЬТРАЦИЯ: пропускаем роды, которых нет в нашем списке
-            if config.USE_CUSTOM_LIST and genus_filter and name.lower() not in genus_filter:
+                for f in done:
+                    url = futures.pop(f)
+                    total_pages_visited += 1
+
+                    try:
+                        found_genera, new_branches, log_buffer = f.result()
+                    except Exception as e:
+                        logger.error(f"Thread failed on {url}: {e}")
+                        continue
+
+                    # Атомарно записываем лог страницы (без каши)
+                    with log_lock:
+                        for level, msg in log_buffer:
+                            if level == 'WARNING':
+                                logger.warning(msg)
+                            elif level == 'ERROR':
+                                logger.error(msg)
+                            else:
+                                logger.info(msg)
+
+                    # Добавляем найденные роды
+                    for g in found_genera:
+                        all_discovered_genera.add(g)
+
+                    # Планируем новые ветки
+                    with visited_lock:
+                        for clade_name, branch_url in new_branches:
+                            if is_stop_boundary(branch_url):
+                                logger.warning(f"CLADE (BOUNDARY STOP): {clade_name} ({branch_url})")
+                                continue
+
+                            if branch_url in visited_urls:
+                                logger.warning(f"CLADE (ALREADY VISITED): {clade_name} ({branch_url})")
+                            else:
+                                visited_urls.add(branch_url)
+                                futures[executor.submit(process_single_page, branch_url, session)] = branch_url
+
+                    if not config.BRIEF_CONSOLE:
+                        sys.stdout.write(f"\rDiscovering clades... [{total_pages_visited} pages] ({len(all_discovered_genera)} genera)")
+                        sys.stdout.flush()
+
+    # 5. Фильтрация и сортировка
+    final_genera = []
+    for g_name in sorted(all_discovered_genera):
+        if config.USE_CUSTOM_LIST and genus_filter:
+            if g_name.lower() not in genus_filter:
                 continue
-            full_text = re.sub(r'<[^>]*>', '', actual_content)
-            full_text = re.sub(r'\[\d+\]', '', full_text).strip()
-            text_parts = re.split(r'[-–—]', full_text, maxsplit=1)
-            description = text_parts[1].strip() if len(text_parts) > 1 else MISSING_VAL
-            
-            # Получаем ВСЕ найденные статусы
-            potential_statuses = get_all_statuses(description)
-            
-            # Проверяем уверенность (один раз для всех)
-            uncertainty_markers = ["possible", "possibly", "probable", "probably", "likely", "perhaps", "?", "may be"]
-            is_uncertain = any(marker in description.lower() for marker in uncertainty_markers)
+        final_genera.append(g_name)
 
-            # 1. Фильтры (мусор и дубликаты)
-            if name in excluded_keywords or len(name) < 2:
-                msg = f"{name}: DUPLICATE"
-                logging.warning(msg)
-                report_duplicates.append(msg)
-                c_dup += 1 # Считаем дубликат
-                continue
-
-            if any(d['genus'] == name for d in genera_data):
-                msg = f"{name}: DUPLICATE"
-                logging.warning(msg)
-                report_duplicates.append(msg)
-                c_dup += 1 # Считаем дубликат
-                continue
-
-            # 2. ЛОГИРОВАНИЕ И ОБРАБОТКА СТАТУСОВ
-            final_status = "valid"
-            if potential_statuses != ["valid"]:
-                status_prefix = "POSSIBLE " if is_uncertain else ""
-                
-                if len(potential_statuses) > 1:
-                    for ps in potential_statuses:
-                        display_ps = ps.replace("excluded", "reclassified").upper()
-                        logging.warning(f"{name}: {status_prefix}{display_ps} ({description[:70]}...)")
-                    
-                    best_status = potential_statuses[0]
-                    final_status = f"possible {best_status}" if is_uncertain else best_status
-                    display_final = final_status.replace("excluded", "reclassified").upper()
-                    logging.info(f"{name}: DECISION (Chosen: {display_final})")
-                
-                else:
-                    best_status = potential_statuses[0]
-                    final_status = f"possible {best_status}" if is_uncertain else best_status
-                    display_final = final_status.replace("excluded", "reclassified").upper()
-                    logging.warning(f"{name}: {display_final} ({description[:70]}...)")
-            else:
-                logging.info(f"{name}: OK")
-
-            # 3. Сохранение данных (Только ОДНА запись на род)
-            genera_data.append({"genus": name, "status": final_status})
-            
-            # 4. Наполнение списков аудита и СЧЕТЧИКИ
-            log_entry = f"{name}: {final_status.upper()}"
-            if "synonym" in final_status: 
-                report_synonyms.append(log_entry)
-                c_syn += 1
-            elif "nudum" in final_status: 
-                report_nudums.append(log_entry)
-                c_nud += 1
-            elif "preoccupied" in final_status: 
-                report_preoccupied.append(log_entry)
-                c_pre += 1
-            elif final_status != "valid": 
-                report_others.append(log_entry)
-                c_oth += 1
-            
-            if not config.BRIEF_CONSOLE:
-                sys.stdout.write(f"\rDiscovering... [{len(genera_data)}]")
-                sys.stdout.flush()
-            time.sleep(0.0005)
-
-    # Завершение парсинга (просто переходим на новую строку, сохраняя счетчик)
     if not config.BRIEF_CONSOLE:
-        print() 
+        print()
         print("Discovery completed.")
 
-    logging.info("Discovery completed.")
+    logger.info("Discovery completed.")
 
-    # --- СОХРАНЕНИЕ РЕЗУЛЬТАТОВ ---
-    if genera_data:
+    # 6. Сохранение в CSV ТОЛЬКО одной колонки genus
+    if final_genera:
         os.makedirs(os.path.dirname(GENERA_CSV), exist_ok=True)
-        
         try:
-            # Сохраняем только таблицу статусов
             with open(GENERA_CSV, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.DictWriter(f, fieldnames=["genus", "status"], delimiter=';', extrasaction='ignore')
-                writer.writeheader()
-                writer.writerows(genera_data)
-            
-            # Статистика
-            size_mb = total_bytes / (1024 * 1024)
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(["genus"])
+                for g in final_genera:
+                    writer.writerow([g])
+
+            size_mb = total_bytes_downloaded / (1024 * 1024)
             size_report = f"Total data downloaded: {size_mb:.2f} MB"
-            count_msg = f"Total unique genera found: {len(genera_data)}"
+            count_msg = f"Total unique genera found: {len(final_genera)}"
             path_msg = f"Genera list saved to {os.path.abspath(GENERA_CSV)}"
 
-            logging.info(size_report)
-            logging.info(count_msg)
-            logging.info(path_msg)
+            logger.info(size_report)
+            logger.info(count_msg)
+            logger.info(path_msg)
 
             if config.BRIEF_CONSOLE:
                 mode_str = "filtered" if config.USE_CUSTOM_LIST else "total"
-                print(f"{len(genera_data)} genera found ({mode_str})")
+                print(f"{len(final_genera)} genera found ({mode_str})")
             else:
-                # В полном режиме выводим только научную статистику и пути
-                print(f"DUPLICATES: {c_dup}\tSYNONYMS: {c_syn}\tNUDUM: {c_nud}\tPREOCCUPIED: {c_pre}\tDUBIOUS/СHIMAERA: {c_oth}")
+                print(f"PAGES CRAWLED: {total_pages_visited}")
                 print(size_report)
                 print(count_msg)
                 print(path_msg)
+                print("Script ended: FETCH_GENERA_LIST")
 
         except Exception as e:
-            err_msg = f"FILES: ERROR (Save failed: {e})"
-            logging.error(err_msg)
+            err_msg = f"Save failed: {e}"
+            logger.error(err_msg)
             print(f"[ERROR] {err_msg}")
     else:
-        msg = "Discovery: ERROR (No names were extracted)"
-        logging.error(msg)
-        print(f"[ERROR] {msg}")
+        err_msg = "Discovery error: No genera were extracted."
+        logger.error(err_msg)
+        print(f"[ERROR] {err_msg}")
 
-    if not config.BRIEF_CONSOLE:
-        print("Script ended: FETCH_GENERA_LIST")
+    logger.info("=== FINAL DATA AUDIT REPORT ===")
+    logger.info(f"[1] TOTAL PAGES CRAWLED ({total_pages_visited})")
+    logger.info(f"[2] TOTAL GENERA DISCOVERED ({len(final_genera)})")
+    logger.info("--- SCRIPT END: FETCH_GENERA_LIST ---")
 
-    # ФИНАЛЬНЫЙ ОТЧЕТ В ЛОГИ
-    logging.info("=== FINAL DATA AUDIT REPORT ===")
-    
-    # Списки варнингов (начинаем нумерацию с 1)
-    final_audit_data = [
-        ('EXCLUDED / DUPLICATES', excluded_log),
-        ('SYNONYMS FOUND', report_synonyms),
-        ('NOMINA NUDA FOUND', report_nudums),
-        ('PREOCCUPIED NAMES', report_preoccupied),
-        ('DUBIOUS / CHIMAERA', report_others)
-    ]
-
-    for idx, (title, items) in enumerate(final_audit_data, 1):
-        logging.info(f"[{idx}] {title} ({len(items)})")
-        for item in items:
-            logging.info(item)
-    
-    logging.info("--- SCRIPT END: FETCH_GENERA_LIST ---")
 
 if __name__ == "__main__":
     collect_genera()

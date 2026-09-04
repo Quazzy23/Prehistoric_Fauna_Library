@@ -125,8 +125,6 @@ def fetch_geochronology():
         if not config.BRIEF_CONSOLE:
             sys.stdout.write(f"\rBuilding matrix... [{r_idx}/{total_data}]")
             sys.stdout.flush()
-        # Плавный прогресс
-        time.sleep(0.0005)
 
     if not config.BRIEF_CONSOLE:
         print()

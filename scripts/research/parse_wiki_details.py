@@ -47,6 +47,8 @@ taxon_lock = threading.Lock()
 # Замок для безопасной записи данных из разных потоков
 data_lock = threading.Lock()
 
+log_lock = threading.Lock() 
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -569,14 +571,15 @@ def fetch_ancestral_taxa(genus_name, session):
 def process_single_genus(genus, initial_status, session, all_results, reports):
     """Обработка одного рода с буферизацией логов для умного присвоения типов."""
     global total_bytes_downloaded
+
+    # Список для временного хранения логов по текущему роду
+    audit_buffer = []
     
     infobox = None
     redirected_to_other = False
     target_genus_name = ""
     true_genus, clade, age, stage = MISSING_VAL, MISSING_VAL, MISSING_VAL, MISSING_VAL
     
-    # Список для временного хранения логов по текущему роду
-    audit_buffer = []
     # Список для контроля уникальности видов на ОДНОЙ странице
     seen_species_on_page = set()
     # --- ЛОГИКА СТЕРИЛИЗАЦИИ НУДУМОВ ---
@@ -655,12 +658,11 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
         return
 
     # --- НАЧАЛО ОТЧЕТА ПО РОДУ ---
-    logging.info(f"{genus}: PARSING...")
+    audit_buffer.append(f"{genus}: PARSING...")
     
-    # Сразу выводим данные о времени и кладе (напрямую в лог)
     age_clean = str(age).strip()
     age_display = f"{age_clean} Ma" if age_clean not in [MISSING_VAL, ""] else MISSING_VAL
-    logging.info(f"{genus}: [DATA] {clade} | {age_display} | {stage}")
+    audit_buffer.append(f"{genus}: [DATA] {clade} | {age_display} | {stage}")
     with data_lock:
             current_session_facts[f"{genus}:DATA"] = f"{clade} | {age_display} | {stage}"
 
@@ -674,7 +676,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
         
         if cached_data:
             source_genus = cached_data['source']
-            logging.info(f"{genus}: [TAXONOMY] Shared with '{clade}' (Data reused from '{source_genus}')")
+            audit_buffer.append(f"{genus}: [TAXONOMY] Shared with '{clade}' (Data reused from '{source_genus}')")
         else:
             lineage, taxo_url = fetch_ancestral_taxa(genus, session)
             
@@ -695,7 +697,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 break
                         
                         if refined_clade != MISSING_VAL:
-                            logging.info(f"{genus}: [TAXONOMY] 'incertae sedis' replaced by parent clade: '{refined_clade}'")
+                            audit_buffer.append(f"{genus}: [TAXONOMY] 'incertae sedis' replaced by parent clade: '{refined_clade}'")
                             clade = refined_clade # Заменяем "incertae" на реальную группу в CSV
                     # ---------------------------------------------------------------
 
@@ -708,7 +710,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                         
                         if refinement_node:
                             old_source = lowest_units_seen[refinement_node]
-                            logging.warning(f"{genus}: [TAXONOMY] Branch '{refinement_node}' (from {old_source}) refined to '{clade}'")
+                            audit_buffer.append(f"{genus}: [TAXONOMY] Branch '{refinement_node}' (from {old_source}) refined to '{clade}'")
                         
                         current_path = []
                         for node in lineage:
@@ -722,7 +724,7 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                                 taxon_cache[clade] = {'source': genus, 'path': lineage}
                     
                     if not refinement_node and not is_incertae_status:
-                        logging.info(f"{genus}: [TAXONOMY] New branch found. Fetched from: {taxo_url}")
+                        audit_buffer.append(f"{genus}: [TAXONOMY] New branch found. Fetched from: {taxo_url}")
                 
                 else: # Сценарий 2: lineage == [] (Вне рамок)
                     start_node_cap = getattr(config, 'TAXONOMY_START_NODE', 'Tetrapoda').capitalize()
@@ -903,29 +905,62 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
                             auto_type_triggered = True
                         break
 
+        # Собираем все строки текущего рода в единый список перед выводом
+        lines_to_flush = []
         for entry in audit_buffer:
-            if isinstance(entry, dict):
-                def f(v): 
-                    if v is None or v == "" or str(v).lower() == "unknown" or str(v) == MISSING_VAL: 
-                        return MISSING_VAL
-                    return str(v)
+          if isinstance(entry, dict):
 
-                upg = f" {entry.get('upgrade_note', '')}" if entry.get('upgrade_note') else ""
-                meta_info = f" {entry.get('meta_note', '')}" if entry.get('meta_note') else ""
-                
-                if entry['type'] == 'MAIN':
-                    display_type = True if auto_type_triggered else entry['is_type']
-                    suffix = " (auto-assigned type)" if auto_type_triggered else ""
-                    # Вставили {f(entry['is_extant'])} после типа
-                    line = f"{genus}: [MAIN] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(display_type)} | {f(entry['is_extant'])} | {f(entry['author'])} | {f(entry['year'])}{suffix}{upg}{meta_info}"
-                else:
-                    # Вставили {f(entry['is_extant'])} после статуса
-                    line = f"{genus}: [SYNONYM] {f(entry['genus'])} | {f(entry['species'])} | {f(entry['status'])} | {f(entry['is_extant'])} | {f(entry['author'])} | {f(entry['year'])}{upg}"
-                logging.info(line)
+            def f(v):
+              if (
+                  v is None
+                  or v == ""
+                  or str(v).lower() == "unknown"
+                  or str(v) == MISSING_VAL
+              ):
+                return MISSING_VAL
+              return str(v)
+
+            upg = (
+                f" {entry.get('upgrade_note', '')}"
+                if entry.get('upgrade_note')
+                else ""
+            )
+            meta_info = (
+                f" {entry.get('meta_note', '')}"
+                if entry.get('meta_note')
+                else ""
+            )
+
+            if entry['type'] == 'MAIN':
+              display_type = True if auto_type_triggered else entry['is_type']
+              suffix = " (auto-assigned type)" if auto_type_triggered else ""
+              line = (
+                  f"{genus}: [MAIN] {f(entry['genus'])} |"
+                  f" {f(entry['species'])} | {f(entry['status'])} |"
+                  f" {f(display_type)} | {f(entry['is_extant'])} |"
+                  f" {f(entry['author'])} |"
+                  f" {f(entry['year'])}{suffix}{upg}{meta_info}"
+              )
             else:
-                logging.info(entry)
+              line = (
+                  f"{genus}: [SYNONYM] {f(entry['genus'])} |"
+                  f" {f(entry['species'])} | {f(entry['status'])} |"
+                  f" {f(entry['is_extant'])} | {f(entry['author'])} |"
+                  f" {f(entry['year'])}{upg}"
+              )
+            lines_to_flush.append(line)
+          else:
+            lines_to_flush.append(entry)
 
-        logging.info(f"{genus}: FINISHED (Found {main_species_count} main, {syn_species_count} synonyms)")
+        lines_to_flush.append(
+            f"{genus}: FINISHED (Found {main_species_count} main,"
+            f" {syn_species_count} synonyms)"
+        )
+
+        # [!] АТОМАРНЫЙ СБРОС: один поток забирает ключ и пишет всю страницу целиком
+        with log_lock:
+          for line in lines_to_flush:
+            logging.info(line)
 
         if total_found == 0:
             logging.error(f"{genus}: ERROR (Found 0 species)")

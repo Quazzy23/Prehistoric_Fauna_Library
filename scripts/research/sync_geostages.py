@@ -14,7 +14,7 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DATA_ROOT = os.path.join(BASE_DIR, config.TABLES_DIR)
 
 GEO_CSV = os.path.join(DATA_ROOT, "geochronology_ref.csv")
-SOURCE_CSV = os.path.join(DATA_ROOT, "validated_fauna.csv")
+SOURCE_CSV = os.path.join(DATA_ROOT, "raw_fauna.csv")
 FINAL_CSV = os.path.join(DATA_ROOT, "final_fauna.csv")
 
 # Настройка логов

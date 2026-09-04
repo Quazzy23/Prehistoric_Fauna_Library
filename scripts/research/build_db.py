@@ -226,7 +226,6 @@ def build_database():
             if not config.BRIEF_CONSOLE:
                 sys.stdout.write(f"\rImporting... [{current_progress}/{total_items}]")
                 sys.stdout.flush()
-                time.sleep(0.0001)
         logging.info(f"Species table: OK (Imported {n_species} records)")
     except Exception as e: 
         errors.append(f"Species import failed: {e}")

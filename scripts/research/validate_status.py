@@ -115,7 +115,6 @@ def validate_species():
         if not config.BRIEF_CONSOLE:
             sys.stdout.write(f"\rValidating... [{i}/{total}]")
             sys.stdout.flush()
-        time.sleep(0.0005)
 
     # 4. ЗАВЕРШЕНИЕ
     if not config.BRIEF_CONSOLE:
