@@ -13,10 +13,10 @@ scripts/local_settings.py
 project_history.txt
 sandbox_history.txt
 
-# 4. Скрипты обслуживания (Maintenance)
-# Игнорируем всё в папке, кроме главного инструмента сброса
+# 4. Скрипты обслуживания и дебаг
 scripts/maintenance/*
 !scripts/maintenance/reset_system.py
+scripts/debug
 
 # 5. Заметки
 notes/

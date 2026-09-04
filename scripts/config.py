@@ -33,23 +33,28 @@ RESEARCH_MODE = "dinosaurs"
 
 
 # [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING: CLADE TREE CRAWLER)
-# start_url — верхняя граница (откуда начинаем обход)
-# stop_url  — нижняя граница (ссылка, на которой останавливаемся и не идем вглубь)
+# start_url     — верхняя граница (откуда начинаем обход)
+# stop_url      — нижняя граница (ссылка, на которой останавливаемся и не идем вглубь)
+# taxonomy_node — опорный таксономический узел для дерева предков
+# suffixes      — суффиксы для поиска статей и шаблонов таксономии (разрешение неоднозначностей)
 WIKI_SETTINGS = {
     "dinosaurs": {
         "start_url": "https://en.wikipedia.org/wiki/Dinosauromorpha",
         "stop_url": "https://en.wikipedia.org/wiki/Avialae",
-        "taxonomy_node": "Dinosauromorpha"
+        "taxonomy_node": "Dinosauromorpha",
+        "suffixes": ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]
     },
     "pterosaurs": {
         "start_url": "https://en.wikipedia.org/wiki/Pterosauria",
         "stop_url": None,
-        "taxonomy_node": "Pterosauria"
+        "taxonomy_node": "Pterosauria",
+        "suffixes": ["", "_(pterosaur)", "_(reptile)", "_(archosaur)"]
     },
     "mammals": {
         "start_url": "https://en.wikipedia.org/wiki/Mammalia",
         "stop_url": None,
-        "taxonomy_node": "Mammalia"
+        "taxonomy_node": "Mammalia",
+        "suffixes": ["", "_(mammal)", "_(synapsid)"]
     }
 }
 
@@ -59,6 +64,7 @@ _current = WIKI_SETTINGS.get(RESEARCH_MODE, WIKI_SETTINGS["dinosaurs"])
 WIKI_START_URL = _current.get("start_url")
 WIKI_STOP_URL = _current.get("stop_url")
 TAXONOMY_START_NODE = _current["taxonomy_node"]
+WIKI_SUFFIXES = _current.get("suffixes", [""])
 
 BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
 GEO_WIKI_URL = "https://en.wikipedia.org/wiki/Geologic_time_scale"
@@ -83,12 +89,12 @@ if IS_MASTER:
     INCLUDE_UNCERTAIN_STAGES = False  # Только твердо установленные ярусы
 else:
     # --- СВОБОДНЫЕ НАСТРОЙКИ ДЛЯ SANDBOX (МЕНЯЙТЕ ДЛЯ ТЕСТОВ) ---
-    USE_CUSTOM_LIST          = False  # True — тест по файлу из custom_lists/
+    USE_CUSTOM_LIST          = True  # True — тест по файлу из custom_lists/
     FETCH_SYNONYMS           = True   # False — быстрый тест без синонимов
     INCLUDE_NOMINA_NUDA      = True   # False — исключить нудумы
     INCLUDE_UNCERTAIN_STAGES = False  # True — включать "Possible Albian"
 
-CUSTOM_LIST_NAME = "sample_genera.txt"
+CUSTOM_LIST_NAME = "test_genera.txt"
 CREATE_CUSTOM_LIST_DIR = True
 
 

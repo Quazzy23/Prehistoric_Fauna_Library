@@ -232,14 +232,37 @@ def process_single_page(current_url, session):
     try:
         soup = BeautifulSoup(resp.text, 'html.parser')
         infobox = soup.find('table', class_='infobox biota')
+        
+        # Если вообще нет инфобокса — тогда да, выходим
         if not infobox:
             return found_genera, new_branches, log_buffer
 
         subgroups_td = find_taxa_section_by_layout(infobox)
-        if not subgroups_td:
+
+        # [!] ЖЕСТКОЕ УСЛОВИЕ: Ищем слова "see" или "text" и обязательное наличие ссылки в ячейке подгрупп
+        has_see_text = False
+        if subgroups_td:
+            td_text = subgroups_td.get_text(separator=" ", strip=True).lower()
+            has_link = bool(subgroups_td.find('a'))
+            if ("see" in td_text or "text" in td_text) and has_link:
+                has_see_text = True
+
+        # Если блок не найден ИЛИ в нем есть сигнал "see ... text" со ссылкой -> запускаем сканер таблиц
+        if not subgroups_td or has_see_text:
+            reason = "Empty infobox" if not subgroups_td else "Found 'see text' trigger"
+            warn_msg = f"FALLBACK (WIKITABLE USED - {reason}) for {page_title} ({current_url})"
+            log_buffer.append(('WARNING', warn_msg))
+
+            table_genera = parse_genera_from_wikitables(soup, current_url)
+            for g in table_genera:
+                found_genera.append(g)
+                log_buffer.append(('INFO', f"GENUS (TABLE): {g}"))
+
             return found_genera, new_branches, log_buffer
 
+        # --- СТАНДАРТНАЯ ЛОГИКА ОБХОДА ИНФОБОКСА ---
         collapsible_tables = subgroups_td.find_all('table', class_='mw-collapsible')
+        # ... дальше старый код обхода root_lists и collapsible_tables ...
 
         # 1. Основные списки
         root_lists = [
@@ -311,58 +334,79 @@ def collect_genera():
     session.mount('https://', adapter)
     session.headers.update(HEADERS)
 
-    # 4. Асинхронный обход дерева через ThreadPool
-    if not START_PAGE and config.USE_CUSTOM_LIST and genus_filter:
-        for name in sorted(genus_filter):
-            all_discovered_genera.add(name.capitalize())
+    # 4. Сбор родов: либо мгновенный перенос из TXT, либо обход Википедии
+    if config.USE_CUSTOM_LIST:
+      logger.info(
+          "Custom list active: skipping Wikipedia crawl, loading directly from"
+          " TXT."
+      )
+      for name in genus_filter:
+        clean_name = name.strip()
+        if clean_name:
+          # Делаем первую букву заглавной
+          formatted_name = clean_name[0].upper() + clean_name[1:]
+          all_discovered_genera.add(formatted_name)
     else:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            visited_urls.add(START_PAGE)
-            futures = {executor.submit(process_single_page, START_PAGE, session): START_PAGE}
+      # Полный многопоточный обход дерева Википедии
+      with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        visited_urls.add(START_PAGE)
+        futures = {
+            executor.submit(process_single_page, START_PAGE, session): (
+                START_PAGE
+            )
+        }
 
-            while futures:
-                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+        while futures:
+          done, _ = wait(futures, return_when=FIRST_COMPLETED)
 
-                for f in done:
-                    url = futures.pop(f)
-                    total_pages_visited += 1
+          for f in done:
+            url = futures.pop(f)
+            total_pages_visited += 1
 
-                    try:
-                        found_genera, new_branches, log_buffer = f.result()
-                    except Exception as e:
-                        logger.error(f"Thread failed on {url}: {e}")
-                        continue
+            try:
+              found_genera, new_branches, log_buffer = f.result()
+            except Exception as e:
+              logger.error(f"Thread failed on {url}: {e}")
+              continue
 
-                    # Атомарно записываем лог страницы (без каши)
-                    with log_lock:
-                        for level, msg in log_buffer:
-                            if level == 'WARNING':
-                                logger.warning(msg)
-                            elif level == 'ERROR':
-                                logger.error(msg)
-                            else:
-                                logger.info(msg)
+            with log_lock:
+              for level, msg in log_buffer:
+                if level == "WARNING":
+                  logger.warning(msg)
+                elif level == "ERROR":
+                  logger.error(msg)
+                else:
+                  logger.info(msg)
 
-                    # Добавляем найденные роды
-                    for g in found_genera:
-                        all_discovered_genera.add(g)
+            for g in found_genera:
+              all_discovered_genera.add(g)
 
-                    # Планируем новые ветки
-                    with visited_lock:
-                        for clade_name, branch_url in new_branches:
-                            if is_stop_boundary(branch_url):
-                                logger.warning(f"CLADE (BOUNDARY STOP): {clade_name} ({branch_url})")
-                                continue
+            with visited_lock:
+              for clade_name, branch_url in new_branches:
+                if is_stop_boundary(branch_url):
+                  logger.warning(
+                      f"CLADE (BOUNDARY STOP): {clade_name} ({branch_url})"
+                  )
+                  continue
 
-                            if branch_url in visited_urls:
-                                logger.warning(f"CLADE (ALREADY VISITED): {clade_name} ({branch_url})")
-                            else:
-                                visited_urls.add(branch_url)
-                                futures[executor.submit(process_single_page, branch_url, session)] = branch_url
+                if branch_url in visited_urls:
+                  logger.warning(
+                      f"CLADE (ALREADY VISITED): {clade_name} ({branch_url})"
+                  )
+                else:
+                  visited_urls.add(branch_url)
+                  futures[
+                      executor.submit(
+                          process_single_page, branch_url, session
+                      )
+                  ] = branch_url
 
-                    if not config.BRIEF_CONSOLE:
-                        sys.stdout.write(f"\rDiscovering clades... [{total_pages_visited} pages] ({len(all_discovered_genera)} genera)")
-                        sys.stdout.flush()
+            if not config.BRIEF_CONSOLE:
+              sys.stdout.write(
+                  f"\rDiscovering clades... [{total_pages_visited} pages]"
+                  f" ({len(all_discovered_genera)} genera)"
+              )
+              sys.stdout.flush()
 
     # 5. Фильтрация и сортировка
     final_genera = []
@@ -421,6 +465,53 @@ def collect_genera():
     logger.info(f"[2] TOTAL GENERA DISCOVERED ({len(final_genera)})")
     logger.info("--- SCRIPT END: FETCH_GENERA_LIST ---")
 
+
+def parse_genera_from_wikitables(soup, current_url):
+  """Резервный парсер: сканирует вики-таблицы (wikitable) на страницах,
+
+  где инфобокс пуст или отправляет в текст (see text). Выдает WARNING в лог.
+  """
+  table_genera = set()
+  wikitables = soup.find_all('table', class_='wikitable')
+
+  for table in wikitables:
+    for row in table.find_all('tr'):
+      # Ищем все ссылки внутри курсива в таблице
+      for it in row.find_all('i'):
+        link = it.find('a')
+        if not link:
+          continue
+
+        raw_name = link.get_text(strip=True)
+        # Чистим от всего лишнего (крестики, вопросы, кавычки, сноски)
+        clean_name = (
+            raw_name.replace('†', '')
+            .replace('?', '')
+            .replace('"', '')
+            .replace('“', '')
+            .strip()
+        )
+
+        # Проверяем, что это похоже на имя рода (с заглавной буквы, без пробелов)
+        if (
+            clean_name
+            and clean_name[0].isupper()
+            and len(clean_name.split()) == 1
+            and len(clean_name) > 1
+        ):
+          bad_words = [
+              'genus',
+              'taxonomy',
+              'phylogeny',
+              'description',
+              'species',
+              'age',
+              'formation',
+          ]
+          if clean_name.lower() not in bad_words:
+            table_genera.add(clean_name)
+
+  return table_genera
 
 if __name__ == "__main__":
     collect_genera()

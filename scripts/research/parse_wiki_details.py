@@ -40,14 +40,22 @@ os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 USE_PARALLEL = config.USE_PARALLEL
 MAX_WORKERS = config.MAX_WORKERS
 
+# [!] РЕЖИМ ЛОГИРОВАНИЯ
+BUFFER_LOGS = True
+
 taxon_cache = {} # Кэш для хранения древа классификации
 lowest_units_seen = {} # НОВОЕ: только минимальные клады { "Thecodontosauridae": "Thecodontosaurus" }
 taxon_lock = threading.Lock()
-
 # Замок для безопасной записи данных из разных потоков
 data_lock = threading.Lock()
-
 log_lock = threading.Lock() 
+# [!] Кэш страниц синонимов: { "bison": (False, None), "raptorex": (True, meta_dict) }
+synonym_page_cache = {}
+
+# [!] КЭШИ ДЛЯ ФИЛЬТРАЦИИ СИНОНИМОВ (КЕЙС БИЗОНА)
+verified_synonyms_cache = set()  # Роды, подтвержденные как Dinosauromorpha
+excluded_synonyms_cache = set()  # Чужаки (Bison, Crocodilus и т.д.)
+visited_genera = set()  # Защита от повторов
 
 # Настройка логирования
 logging.basicConfig(
@@ -279,7 +287,7 @@ def extract_data(element, true_genus, header_says_type, genus_is_extant): # До
 
     if not species_part or species_part == MISSING_VAL: return None
     species_part = species_part.strip(".,? \"")
-    if species_part.lower() in [true_genus.lower(), "text", "see", "al", "none", MISSING_VAL]: return None
+    if species_part.lower() in ["text", "see", "al", "none", MISSING_VAL]: return None
 
     author = clean_author_string(author_part_raw, true_genus, species_part)
     # Определяем финальный статус с учетом нудума
@@ -412,108 +420,147 @@ def check_and_report_historical(element, true_genus, reports):
                 reports['hist_notes'].append(f"{name_only} -> {true_genus}")
 
 def extract_synonym_data(element, true_genus, genus_is_extant):
-    """Извлекает синонимы. Исправлено сохранение авторов (small) и вложенные списки."""
-    # 0. Подготовка
-    temp_elem = copy.copy(element)
-    # Отрезаем только вложенные списки, чтобы не ловить чужие имена (кейс Suchosaurus)
-    for nested in temp_elem.find_all(['ul', 'ol']):
-        nested.decompose()
-        
-    # Чистим технические теги (но НЕ чистим small, там автор!)
-    for tag in temp_elem.find_all(['abbr', 'sup', 'style']): 
-        tag.decompose()
-        
-    raw_full_text = temp_elem.get_text(separator=" ", strip=True)
+  """Извлекает синонимы, статус, авторов и прямую ссылку на статью таксона."""
+  # 1. Забираем ссылку на сам таксон (строго вне <small> с авторами!)
+  syn_url = None
+  for a in element.find_all('a'):
+    if not a.find_parent('small'):
+      href = a.get('href', '').strip()
+      if href and not href.startswith('#'):
+        syn_url = (
+            href
+            if href.startswith('http')
+            else f"https://en.wikipedia.org{href}"
+        )
+        break
 
-    # 1. ПОИСК НАЗВАНИЯ (Токены из курсива)
-    tech_italics = ["nomen", "nudum", "dubium", "sic", "reject", "conserv", "originally", "et", "al", "type", "vide"]
-    scientific_tokens = []
-    nodes_to_delete = []
-    is_quoted_species = False
-    
-    for it in temp_elem.find_all('i'):
-        # Пропускаем курсив, если он внутри small (это пометки типа et al. или sic)
-        if it.find_parent('small'): continue
-            
-        it_txt = it.get_text(separator=" ", strip=True).replace('†', '').replace('?', '').strip()
-        words_in_tag = it_txt.lower().split()
-        
-        if any(c.isalpha() for c in it_txt) and not any(t in words_in_tag for t in tech_italics):
-            scientific_tokens.append(it_txt)
-            nodes_to_delete.append(it)
-        else:
-            # Название заканчивается, если встретили технический курсив вне small
-            if scientific_tokens: break
+  temp_elem = copy.copy(element)
+  for nested in temp_elem.find_all(['ul', 'ol']):
+    nested.decompose()
+  for tag in temp_elem.find_all(['abbr', 'sup', 'style']):
+    tag.decompose()
 
-    name_text_raw = " ".join(scientific_tokens)
+  raw_full_text = temp_elem.get_text(separator=" ", strip=True)
 
-    # ПРОВЕРКА НА КОВЫЧКИ (Кейс "sternbergi")
-    remaining_text_for_quotes = temp_elem.get_text(separator=" ", strip=True)
-    quoted = re.findall(r'"(.*?)"', remaining_text_for_quotes)
-    if quoted:
-        name_text_raw += f" {quoted[0]}"
-        is_quoted_species = True
+  # 2. Поиск токенов названия из курсива
+  tech_italics = [
+      "nomen",
+      "nudum",
+      "dubium",
+      "sic",
+      "reject",
+      "conserv",
+      "originally",
+      "et",
+      "al",
+      "type",
+      "vide",
+  ]
+  scientific_tokens = []
+  nodes_to_delete = []
 
-    if not name_text_raw: return None
+  for it in temp_elem.find_all('i'):
+    if it.find_parent('small'):
+      continue
+    it_txt = (
+        it.get_text(separator=" ", strip=True)
+        .replace('†', '')
+        .replace('?', '')
+        .strip()
+    )
+    words_in_tag = it_txt.lower().split()
+    if any(c.isalpha() for c in it_txt) and not any(
+        t in words_in_tag for t in tech_italics
+    ):
+      scientific_tokens.append(it_txt)
+      nodes_to_delete.append(it)
+    else:
+      if scientific_tokens:
+        break
 
-    # 2. ИЗОЛЯЦИЯ МЕТАДАННЫХ (Удаляем только само название)
-    for node in nodes_to_delete: 
-        node.decompose()
-    
-    # Теперь в metadata_raw останется и текст, и содержимое <small> (авторы)
-    metadata_raw = temp_elem.get_text(separator=" ", strip=True)
+  name_text_raw = " ".join(scientific_tokens)
 
-    # 3. РАЗБОР НА РОД И ВИД
-    name_parts = [w.strip(' ".,?') for w in name_text_raw.split() if w.strip(' ".,?') and not w.strip(' ".,?').startswith('(')]
-    if not name_parts: return None
-    
-    s_genus = name_parts[0]
-    if (len(s_genus) <= 2 and s_genus.endswith('.')) or (len(s_genus) == 1 and s_genus.isupper()):
-        if true_genus != MISSING_VAL: s_genus = true_genus
-    
-    s_species = None
-    if len(name_parts) > 1:
-        for part in name_parts[1:]:
-            if part[0].islower(): # Вид всегда со строчной
-                s_species = part
-                break
+  # Проверка на кавычки
+  quoted = re.findall(r'["“](.*?)["”]', raw_full_text)
+  is_quoted = bool(quoted)
+  if quoted and not name_text_raw:
+    name_text_raw = quoted[0]
 
-    # 4. ПОИСК ГОДА И АВТОРА
-    years = re.findall(r'(\d{4})', metadata_raw)
-    year = years[-1] if years else MISSING_VAL
-    
-    author_raw = metadata_raw
-    if year != MISSING_VAL:
-        pre_year = metadata_raw.rsplit(year, 1)[0]
-        author_raw = pre_year.rsplit(')', 1)[-1] if ')' in pre_year else pre_year
-    
-    author_final = clean_author_string(author_raw, s_genus, s_species)
-    # Проверка на служебные заголовки (кейс Suchosaurus "Synonyms of...")
-    if author_final.lower() in ["synonyms", "synonyms of", "list", "list of synonyms", "-"]:
-        return None
+  if not name_text_raw:
+    return None
 
-    # 5. СТАТУС
-    status = "synonym"
-    if "?" in raw_full_text or "possible" in raw_full_text.lower() or "dubium" in raw_full_text.lower():
-        status = "possible synonym"
-    if is_quoted_species or any(x in raw_full_text.lower() for x in ["nomen nudum", "nudum"]):
-        status = "possible nudum" if status == "possible synonym" else "nudum"
+  for node in nodes_to_delete:
+    node.decompose()
 
-    return {
-        "genus": s_genus, 
-        "species": s_species,
-        "author": author_final, 
-        "year": year, 
-        "status": status, 
-        "is_type": False,
-        "is_extant": genus_is_extant
-    }
+  metadata_raw = temp_elem.get_text(separator=" ", strip=True)
+
+  name_parts = [
+      w.strip(' ".,?')
+      for w in name_text_raw.split()
+      if w.strip(' ".,?') and not w.strip(' ".,?').startswith('(')
+  ]
+  if not name_parts:
+    return None
+
+  s_genus = name_parts[0]
+  if (len(s_genus) <= 2 and s_genus.endswith('.')) or (
+      len(s_genus) == 1 and s_genus.isupper()
+  ):
+    if true_genus != MISSING_VAL:
+      s_genus = true_genus
+
+  s_species = None
+  if len(name_parts) > 1:
+    for part in name_parts[1:]:
+      if part[0].islower():
+        s_species = part
+        break
+
+  years = re.findall(r'(\d{4})', metadata_raw)
+  year = years[-1] if years else MISSING_VAL
+  author_raw = metadata_raw
+  if year != MISSING_VAL:
+    pre_year = metadata_raw.rsplit(year, 1)[0]
+    author_raw = pre_year.rsplit(')', 1)[-1] if ')' in pre_year else pre_year
+
+  author_final = clean_author_string(author_raw, s_genus, s_species)
+  if author_final.lower() in [
+      "synonyms",
+      "synonyms of",
+      "list",
+      "list of synonyms",
+      "-",
+  ]:
+    return None
+
+  status = "synonym"
+  if (
+      "?" in raw_full_text
+      or "possible" in raw_full_text.lower()
+      or "dubium" in raw_full_text.lower()
+  ):
+    status = "possible synonym"
+  if is_quoted or any(
+      x in raw_full_text.lower() for x in ["nomen nudum", "nudum"]
+  ):
+    status = "possible nudum" if status == "possible synonym" else "nudum"
+
+  return {
+      "genus": s_genus,
+      "species": s_species,
+      "author": author_final,
+      "year": year,
+      "status": status,
+      "is_type": False,
+      "is_extant": genus_is_extant,
+      "url": syn_url,  # <--- ССЫЛКА НА ТАКСОН
+  }
 
 def fetch_ancestral_taxa(genus_name, session):
     """Считывает древо классификации с поддержкой алиасов (суффиксов)."""
-    start_node = getattr(config, 'TAXONOMY_START_NODE', 'Tetrapoda').lower()
-    # Список суффиксов для проверки (такой же, как для основных страниц)
-    suffixes = ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]
+    start_node = getattr(config, "TAXONOMY_START_NODE", "Tetrapoda").lower()
+    # Берем суффиксы динамически из config.py для текущего RESEARCH_MODE
+    suffixes = config.WIKI_SUFFIXES
     
     for suffix in suffixes:
         url = f"https://en.wikipedia.org/wiki/Template:Taxonomy/{genus_name}{suffix}"
@@ -568,74 +615,192 @@ def fetch_ancestral_taxa(genus_name, session):
 
     return None, f"https://en.wikipedia.org/wiki/Template:Taxonomy/{genus_name}"
 
-def process_single_genus(genus, initial_status, session, all_results, reports):
-    """Обработка одного рода с буферизацией логов для умного присвоения типов."""
-    global total_bytes_downloaded
+def verify_synonym_scope(s_genus, session):
+  """Проверяет, относится ли род синонима к целевой группе (Dinosauromorpha).
 
-    # Список для временного хранения логов по текущему роду
-    audit_buffer = []
+  Использует кэш, шаблоны таксономии и инфобокс страницы.
+  """
+  g_low = s_genus.lower()
+
+  with data_lock:
+    if g_low in verified_synonyms_cache:
+      return True, None
+    if g_low in excluded_synonyms_cache:
+      return False, None
+
+  # 1. Проверяем цепочку предков через Template:Taxonomy
+  lineage, _ = fetch_ancestral_taxa(s_genus, session)
+
+  # Если шаблон найден и Dinosauromorpha есть в предках
+  if lineage is not None and len(lineage) > 0:
+    with data_lock:
+      verified_synonyms_cache.add(g_low)
+    return True, None
+
+  # Если шаблон есть, но Dinosauromorpha в нем НЕТ (кейс Bison -> Mammalia)
+  if lineage is not None and len(lineage) == 0:
+    with data_lock:
+      excluded_synonyms_cache.add(g_low)
+    return False, None
+
+  # 2. Если шаблона нет (404), идем на саму страницу рода (Polyonax, Agathaumas)
+  syn_page_meta = None
+  for suffix in config.WIKI_SUFFIXES:
+    try:
+      resp = session.get(BASE_WIKI_URL + s_genus + suffix, timeout=8)
+      if resp.status_code == 200:
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        infobox = soup.find('table', class_='infobox biota')
+        if infobox:
+          # Проверяем классификацию на целевой странице
+          t_gen, clade, age, stage, _, _, extant = extract_classification(
+              infobox
+          )
+          # Если семейство уже в нашем кэше динозавров
+          with taxon_lock:
+            is_known_dino = clade in taxon_cache
+
+          if is_known_dino or (clade != MISSING_VAL and 'incertae' not in clade):
+            with data_lock:
+              verified_synonyms_cache.add(g_low)
+            syn_page_meta = {
+                'clade': clade,
+                'age': age,
+                'stage': stage,
+                'is_extant': extant,
+            }
+            return True, syn_page_meta
+        break
+    except:
+      pass
+
+  # Если не подтвердили принадлежность — бракуем
+  with data_lock:
+    excluded_synonyms_cache.add(g_low)
+  return False, None
+
+def is_synonym_in_scope(s_genus, syn_url, true_genus, session, audit_buffer):
+  """Фильтр-шлагбаум: проверяет только одно — принадлежит ли род к нашей группе.
+
+  Возвращает True (свой, пропускаем) или False (чужак, блокируем).
+  """
+  s_genus_low = s_genus.lower()
+
+  if "synonym_scope_cache" not in globals():
+    global synonym_scope_cache
+    synonym_scope_cache = {}
+
+  with data_lock:
+    if s_genus_low in synonym_scope_cache:
+      return synonym_scope_cache[s_genus_low]
+
+  target_url = syn_url or f"{BASE_WIKI_URL}{s_genus}"
+  is_in_scope = True
+
+  try:
+    resp = session.get(target_url, timeout=8, allow_redirects=True)
+    if resp.status_code == 200:
+      # Редирект на самого себя (Sterrholophus -> Triceratops) = точно наш
+      final_slug = resp.url.rstrip("/").split("/")[-1].lower()
+      if final_slug == true_genus.lower():
+        with data_lock:
+          synonym_scope_cache[s_genus_low] = True
+        return True
+
+      syn_soup = BeautifulSoup(resp.text, "html.parser")
+      syn_infobox = syn_soup.find("table", class_="infobox biota")
+      if syn_infobox:
+        _, p_clade, _, _, _, _, _ = extract_classification(syn_infobox)
+
+        # 1. Если семейство уже в нашем кэше динозавров
+        with taxon_lock:
+          is_known = (
+              (p_clade in taxon_cache)
+              if (p_clade != MISSING_VAL and "incertae" not in p_clade.lower())
+              else False
+          )
+
+        if is_known:
+          is_in_scope = True
+        else:
+          # 2. Если семейство незнакомое — проверяем древо в Template:Taxonomy
+          lineage, _ = fetch_ancestral_taxa(s_genus, session)
+          if lineage is not None and len(lineage) == 0:
+            is_in_scope = False  # КЕЙС БИЗОНА: родословная есть, но Dinosauromorpha нет!
+          elif lineage is not None and len(lineage) > 0:
+            is_in_scope = True
+  except:
+    is_in_scope = True  # Если сеть подвела, не рубим сгоряча
+
+  with data_lock:
+    synonym_scope_cache[s_genus_low] = is_in_scope
+  return is_in_scope
+
+
+def fetch_genus_page(genus, session, reports):
+    """Поиск и скачивание страницы рода с умной обработкой редиректов и суффиксов."""
+    global total_bytes_downloaded
     
     infobox = None
     redirected_to_other = False
     target_genus_name = ""
-    true_genus, clade, age, stage = MISSING_VAL, MISSING_VAL, MISSING_VAL, MISSING_VAL
     
-    # Список для контроля уникальности видов на ОДНОЙ странице
-    seen_species_on_page = set()
-    # --- ЛОГИКА СТЕРИЛИЗАЦИИ НУДУМОВ ---
-    if "nudum" in str(initial_status).lower():
-        logging.info(f"{genus}: STUB CREATED (nomen nudum - skipping Wikipedia)")
-        info_stub = {
-            "genus": genus, "species": MISSING_VAL, "author": MISSING_VAL, 
-            "year": MISSING_VAL, "status": "nudum", "is_extant": False
-        }
-        add_species_to_results(all_results, info_stub, MISSING_VAL, MISSING_VAL, MISSING_VAL, reports, genus)
-        return
-
-    # --- ПОИСК СТРАНИЦЫ ---
-    for suffix in ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]:
+    for suffix in config.WIKI_SUFFIXES:
         success = False
         retries = 0
         while retries < 3:
             try:
                 response = session.get(BASE_WIKI_URL + genus + suffix, timeout=10)
-                with data_lock: total_bytes_downloaded += len(response.content)
+                with data_lock: 
+                    total_bytes_downloaded += len(response.content)
+                    
                 if response.status_code == 429:
                     retries += 1
                     time.sleep(15)
                     continue
+                    
                 if response.status_code == 200:
                     soup = BeautifulSoup(response.text, 'html.parser')
                     h1_tag = soup.find('h1', id='firstHeading')
+                    
                     if h1_tag:
                         actual_title = h1_tag.get_text(strip=True).replace('†', '').strip()
-                        # Очищаем заголовок и ввод от скобок для честного сравнения
                         clean_title = re.sub(r'\s*\(.*?\)', '', actual_title).lower()
                         clean_input = re.sub(r'\s*\(.*?\)', '', genus).lower()
-                        
-                        # ПЕРВОЕ СЛОВО заголовка (на случай если там "Yi (dinosaur)")
                         title_first_word = clean_title.split()[0]
 
-                        # Если это ДРУГОЙ род (напр. запрос Yi -> заголовок Nicolia)
+                        # Ищем инфобокс СРАЗУ
+                        current_infobox = soup.find('table', class_='infobox biota')
+
+                        # Если названия не совпадают (нас редиректнуло)
                         if title_first_word != clean_input:
-                            redirected_to_other = True
-                            target_genus_name = actual_title
-                            success = True
-                            break
+                            # Если на чужой странице ЕСТЬ инфобокс — это научный редирект (сдаемся)
+                            if current_infobox:
+                                redirected_to_other = True
+                                target_genus_name = actual_title
+                                success = True
+                                break
+                            # Если инфобокса НЕТ (как Triple-headed eagle) — игнорируем этот редирект и пробуем следующий суффикс!
+                            else:
+                                success = True
+                                break
                         
-                        # Если это ТОТ ЖЕ род, но найден через суффикс (напр. Yi -> Yi (dinosaur))
+                        # Если названия совпадают — это наша страница
                         if actual_title.lower() != genus.lower() or suffix != "":
                             display_name = actual_title if actual_title.lower() != genus.lower() else f"{genus}{suffix}"
                             logging.warning(f"{genus}: ALIAS (Found as {display_name})")
                             with data_lock:
                                 reports['found_as'].append(f"{genus} -> {display_name}")
-                    infobox = soup.find('table', class_='infobox biota')
-                    if infobox:
-                        true_genus, clade, age, stage, g_auth_raw, g_year, genus_is_extant = extract_classification(infobox)
-                        success = True
-                        break
+                                
+                        if current_infobox:
+                            infobox = current_infobox
+                            success = True
+                            break
+                    
+                    # Инфобокса нет, идем к следующему суффиксу
                     success = True
                     break
+                    
                 elif response.status_code == 404:
                     success = True
                     break
@@ -645,329 +810,466 @@ def process_single_genus(genus, initial_status, session, all_results, reports):
             except:
                 retries += 1
                 time.sleep(2)
-        if success and (infobox or redirected_to_other): break
-    
+                
+        # Выходим из цикла суффиксов ТОЛЬКО если нашли инфобокс или нас перекинуло на другой реальный таксон
+        if success and (infobox or redirected_to_other): 
+            break
+            
     if redirected_to_other:
         logging.warning(f"{genus}: SKIP (Redirected to {target_genus_name})")
-        with data_lock: reports['redirects'].append(f"{genus} -> {target_genus_name}")
-        return
+        with data_lock: 
+            reports['redirects'].append(f"{genus} -> {target_genus_name}")
+        return None
+        
+    return infobox
 
-    if not infobox:
-        logging.error(f"{genus}: ERROR (No infobox found)")
-        with data_lock: reports['no_infobox'].append(f"{genus}: No infobox found")
-        return
 
-    # --- НАЧАЛО ОТЧЕТА ПО РОДУ ---
-    audit_buffer.append(f"{genus}: PARSING...")
-    
-    age_clean = str(age).strip()
-    age_display = f"{age_clean} Ma" if age_clean not in [MISSING_VAL, ""] else MISSING_VAL
-    audit_buffer.append(f"{genus}: [DATA] {clade} | {age_display} | {stage}")
+def resolve_genus_taxonomy(genus, clade, session, audit_buffer, reports):
+  """Проверка и построение таксономии рода через кэш и шаблоны."""
+  if clade == MISSING_VAL:
+    logging.error(f"{genus}: [TAXONOMY] REJECTED (No clade/family in infobox)")
     with data_lock:
-            current_session_facts[f"{genus}:DATA"] = f"{clade} | {age_display} | {stage}"
+      reports['out_of_class'].append(f"{genus} (No classification data)")
+    return None
 
-    # --- ЛОГИКА ПОЛНОЙ КЛАССИФИКАЦИИ ---
-    if clade != MISSING_VAL:
-        # ПРОВЕРКА: не кэшируем incertae sedis, так как это статус, а не уникальный таксон
-        is_incertae_status = "incertae" in clade.lower()
-        
-        with taxon_lock:
-            cached_data = taxon_cache.get(clade) if not is_incertae_status else None
-        
-        if cached_data:
-            source_genus = cached_data['source']
-            audit_buffer.append(f"{genus}: [TAXONOMY] Shared with '{clade}' (Data reused from '{source_genus}')")
+  is_incertae = 'incertae' in clade.lower()
+  with taxon_lock:
+    cached = taxon_cache.get(clade) if not is_incertae else None
+
+  if cached:
+    audit_buffer.append(
+        f"{genus}: [TAXONOMY] Shared with '{clade}' (Data reused from"
+        f" '{cached['source']}')"
+    )
+    return clade
+
+  lineage, taxo_url = fetch_ancestral_taxa(genus, session)
+  if lineage is None:
+    logging.info(f"{genus}: ERROR (Could not fetch tree from {taxo_url})")
+    with data_lock:
+      reports['taxonomy_errors'].append(f"{genus}: could not fetch tree")
+    return clade
+
+  if len(lineage) == 0:
+    start_cap = getattr(
+        config, 'TAXONOMY_START_NODE', 'Dinosauromorpha'
+    ).capitalize()
+    logging.error(f"{genus}: ERROR (Taxonomy out of scope: {start_cap} not found)")
+    with data_lock:
+      reports['out_of_class'].append(f"{genus} (Out of scope)")
+    return None
+
+  if is_incertae:
+    for node in reversed(lineage):
+      if 'incertae' not in node.lower():
+        audit_buffer.append(
+            f"{genus}: [TAXONOMY] 'incertae sedis' replaced by parent clade:"
+            f" '{node}'"
+        )
+        clade = node
+        break
+
+  with taxon_lock:
+    current_path = []
+    for node in lineage:
+      current_path.append(node)
+      if node not in taxon_cache:
+        taxon_cache[node] = {'source': genus, 'path': list(current_path)}
+    if clade not in taxon_cache:
+      taxon_cache[clade] = {'source': genus, 'path': lineage}
+
+  audit_buffer.append(
+      f"{genus}: [TAXONOMY] New branch found. Fetched from: {taxo_url}"
+  )
+  return clade
+
+
+def parse_main_section(
+    rows,
+    true_genus,
+    genus_is_extant,
+    g_auth_raw,
+    g_year,
+    clade,
+    age,
+    stage,
+    seen_species,
+    all_results,
+    reports,
+    audit_buffer,
+):
+  """Парсинг видов основного раздела."""
+  main_count = 0
+  type_species_ref = ''
+
+  for row in rows:
+    text = row.get_text().lower()
+    if 'type species' in text or 'binomial name' in text:
+      target = row.find_next_sibling('tr') if 'type species' in text else row
+      if target and target.find('td'):
+        parts = (
+            target.find('td')
+            .get_text(separator=' ', strip=True)
+            .replace('†', '')
+            .replace('?', '')
+            .split()
+        )
+        if len(parts) >= 2:
+          type_species_ref = parts[1].lower()
+        elif len(parts) == 1:
+          type_species_ref = parts[0].lower()
+      if type_species_ref:
+        break
+
+  for j, row in enumerate(rows):
+    header = row.find('th')
+    if not header:
+      continue
+    h_text = header.get_text(strip=True).lower()
+    if any(
+        h in h_text
+        for h in [
+            'type species',
+            'other species',
+            'species',
+            'binomial name',
+        ]
+    ):
+      data_td = row.find('td') or (
+          rows[j + 1].find('td') if j + 1 < len(rows) else None
+      )
+      if not data_td:
+        continue
+
+      items = data_td.find_all('li') or [data_td]
+      for item in items:
+        is_type_header = 'type' in h_text or 'binomial' in h_text
+        info = extract_data(item, true_genus, is_type_header, genus_is_extant)
+        if not info:
+          continue
+
+        s_low = info['species'].lower()
+        if s_low in seen_species:
+          continue
+        seen_species.add(s_low)
+
+        is_candidate = (
+            info['is_type']
+            or s_low == type_species_ref
+            or (h_text == 'species' and len(items) == 1)
+        )
+        meta_note = ''
+        if is_candidate:
+          if info['author'] == MISSING_VAL and g_auth_raw != MISSING_VAL:
+            info['author'] = clean_author_string(g_auth_raw, true_genus)
+            meta_note = '(metadata from genus)'
+          if info['year'] == MISSING_VAL and g_year != MISSING_VAL:
+            info['year'] = g_year
+            meta_note = '(metadata from genus)'
+
+        res = add_species_to_results(
+            all_results, info, clade, age, stage, reports, true_genus
+        )
+        if res in ['added', 'upgraded']:
+          main_count += 1
+          with data_lock:
+            current_session_facts[
+                f"{info['genus']}:MAIN:{info['species']}"
+            ] = (
+                f"{info['status']} | {info['is_type']} | {info['author']} |"
+                f" {info['year']}"
+            )
+          upg = '(upgraded metadata)' if res == 'upgraded' else ''
+          audit_buffer.append({
+              'type': 'MAIN',
+              'genus': info['genus'],
+              'species': info['species'],
+              'status': info['status'],
+              'is_type': info['is_type'],
+              'is_extant': info['is_extant'],
+              'author': info['author'],
+              'year': info['year'],
+              'upgrade_note': upg,
+              'meta_note': meta_note,
+          })
         else:
-            lineage, taxo_url = fetch_ancestral_taxa(genus, session)
-            
-            if lineage is not None:
-                # ПРОВЕРКА НА АЛИАС ТАКСОНОМИИ
-                base_taxo_url = f"https://en.wikipedia.org/wiki/Template:Taxonomy/{genus}"
-                if taxo_url != base_taxo_url:
-                    logging.warning(f"{genus} [TAXONOMY] Alias (found on {taxo_url})")
+          with data_lock:
+            reports['duplicates'].append(
+                f"{info['genus']} {info['species']} (main repeat)"
+            )
+  return main_count
 
-                if len(lineage) > 0: # Сценарий 1: Успех
-                    # --- НОВОЕ: ЛОГИКА ТАКСОНОМИЧЕСКОГО ПРЫЖКА ДЛЯ INCERTAE SEDIS ---
-                    if is_incertae_status:
-                        # Ищем в цепочке lineage последнего нормального предка (не incertae)
-                        refined_clade = MISSING_VAL
-                        for node in reversed(lineage):
-                            if "incertae" not in node.lower():
-                                refined_clade = node
-                                break
-                        
-                        if refined_clade != MISSING_VAL:
-                            audit_buffer.append(f"{genus}: [TAXONOMY] 'incertae sedis' replaced by parent clade: '{refined_clade}'")
-                            clade = refined_clade # Заменяем "incertae" на реальную группу в CSV
-                    # ---------------------------------------------------------------
 
-                    with taxon_lock:
-                        refinement_node = None
-                        for node in reversed(lineage):
-                            if node in lowest_units_seen:
-                                refinement_node = node
-                                break
-                        
-                        if refinement_node:
-                            old_source = lowest_units_seen[refinement_node]
-                            audit_buffer.append(f"{genus}: [TAXONOMY] Branch '{refinement_node}' (from {old_source}) refined to '{clade}'")
-                        
-                        current_path = []
-                        for node in lineage:
-                            current_path.append(node)
-                            if node not in taxon_cache:
-                                taxon_cache[node] = {'source': genus, 'path': list(current_path)}
-                        
-                        if clade not in lowest_units_seen:
-                            lowest_units_seen[clade] = genus
-                            if clade not in taxon_cache:
-                                taxon_cache[clade] = {'source': genus, 'path': lineage}
-                    
-                    if not refinement_node and not is_incertae_status:
-                        audit_buffer.append(f"{genus}: [TAXONOMY] New branch found. Fetched from: {taxo_url}")
-                
-                else: # Сценарий 2: lineage == [] (Вне рамок)
-                    start_node_cap = getattr(config, 'TAXONOMY_START_NODE', 'Tetrapoda').capitalize()
-                    msg = f"{genus}: ERROR (Taxonomy out of scope: {start_node_cap} not found)"
-                    logging.error(msg)
-                    with data_lock:
-                        reports['out_of_class'].append(f"{genus} (Out of scope)")
-                    return 
-            
-            else: # Сценарий 3: lineage is None (Ошибка сети)
-                logging.info(f"{genus}: ERROR (Could not fetch tree from {taxo_url})")
-                with data_lock:
-                    reports['taxonomy_errors'].append(f"{genus}: could not fetch tree")
-    else:
-        logging.error(f"{genus}: [TAXONOMY] REJECTED (No clade/family in infobox to verify lineage)")
+def parse_synonyms_section(
+    rows,
+    true_genus,
+    genus_is_extant,
+    clade,
+    age,
+    stage,
+    seen_species,
+    all_results,
+    reports,
+    audit_buffer,
+    session,
+):
+  """Простой и надежный парсинг синонимов с отсевом чужаков (Бизона)."""
+  syn_count = 0
+  for j, row in enumerate(rows):
+    header = row.find("th")
+    if not (header and "synonyms" in header.get_text().lower()):
+      continue
+    data_td = rows[j + 1].find("td") if j + 1 < len(rows) else None
+    if not data_td:
+      continue
+
+    li_items = data_td.find_all("li")
+    genus_syn_links = {}
+
+    for li in li_items:
+      s_info = extract_synonym_data(li, true_genus, genus_is_extant)
+      if not s_info:
+        continue
+
+      s_gen, s_sp = s_info["genus"], s_info["species"]
+      s_gen_low = s_gen.lower()
+
+      # Запоминаем ссылку на род, если она была в блоке родов
+      if s_info.get("url") and s_gen:
+        genus_syn_links[s_gen_low] = s_info["url"]
+
+      # Если в строке нет вида (просто имя рода) — пропускаем
+      if not s_sp or s_sp == MISSING_VAL:
+        audit_buffer.append(
+            f"{true_genus}: [SYNONYM] {s_gen} | - | {s_info['status']} |"
+            f" {s_info['author']} | {s_info['year']} (ignored, no species"
+            " provided)"
+        )
+        continue
+
+      # Проверка на повтор эпитета внутри страницы
+      if s_sp.lower() in seen_species:
+        audit_buffer.append(
+            f"{true_genus}: [SYNONYM] {s_gen} | {s_sp} | {s_info['status']} |"
+            f" {s_info['author']} | {s_info['year']} (ignored, species epithet"
+            " already processed)"
+        )
         with data_lock:
-            reports['out_of_class'].append(f"{genus} (No classification data)")
-        return # ПРЕРЫВАЕМ, так как не можем подтвердить принадлежность к Dinosauromorpha
+          reports["duplicates"].append(f"{s_gen} {s_sp} (epithet repeat)")
+        continue
 
-    try:
-        rows = infobox.find_all('tr')
-        main_species_count = 0
-        syn_species_count = 0
-
-        # --- ПОИСК ИМЕНИ ТИПОВОГО ВИДА ДЛЯ ПОДСТАНОВКИ (ДЛЯ ЛОГОВ) ---
-        type_species_for_ref = ""
-        for row in rows:
-            text = row.get_text().lower()
-            if "type species" in text or "binomial name" in text:
-                target = row.find_next_sibling('tr') if "type species" in text else row
-                if target:
-                    td = target.find('td')
-                    if td:
-                        clean_t = td.get_text(separator=" ", strip=True).replace('†', '').replace('?', '')
-                        t_parts = clean_t.split()
-                        if len(t_parts) >= 2: type_species_for_ref = t_parts[1].lower()
-                        elif len(t_parts) == 1: type_species_for_ref = t_parts[0].lower()
-                if type_species_for_ref: break
-
-        # ШАГ 1: ПАРСИНГ ОСНОВНОГО РАЗДЕЛА
-        for j, row in enumerate(rows):
-            header = row.find('th')
-            if not header: continue
-            h_text = header.get_text(strip=True).lower()
-            if any(h in h_text for h in ["type species", "other species", "species", "binomial name"]):
-                data_td = row.find('td')
-                if not data_td and j + 1 < len(rows): data_td = rows[j+1].find('td')
-                if data_td:
-                    li_items = data_td.find_all('li')
-                    items = li_items if li_items else [data_td]
-                    for item in items:
-                        # 1. Определяем, говорит ли ЗАГОЛОВОК, что это тип
-                        is_type_by_header = "type" in h_text or "binomial" in h_text
-                        
-                        # 2. Вызываем экстрактор, передавая это знание и статус рода
-                        info = extract_data(item, true_genus, is_type_by_header, genus_is_extant)
-                        
-                        if info:
-                            s_name_low = info['species'].lower()
-                            if s_name_low in seen_species_on_page: continue 
-                            seen_species_on_page.add(s_name_low)
-                            
-                            # 3. Итоговое значение is_type берем из того, что вернула функция
-                            actual_is_type = info['is_type']
-                            
-                            # Кандидат на метаданные (для Barrosasaurus)
-                            is_type_candidate = actual_is_type or info['species'].lower() == type_species_for_ref or (h_text == "species" and len(items) == 1)
-
-                            # --- ЛОГИКА ПОДСТАНОВКИ ИЗ РОДА (Кейс Barrosasaurus) ---
-                            current_meta_note = ""
-                            if is_type_candidate:
-                                if info['author'] == MISSING_VAL and g_auth_raw != MISSING_VAL:
-                                    info['author'] = clean_author_string(g_auth_raw, true_genus)
-                                    current_meta_note = "(metadata from genus)"
-                                if info['year'] == MISSING_VAL and g_year != MISSING_VAL:
-                                    info['year'] = g_year # <--- Теперь год гарантированно подставится
-                                    current_meta_note = "(metadata from genus)"
-
-                            # Сохраняем в итоговый словарь
-                            info['is_type'] = actual_is_type
-                            res_status = add_species_to_results(all_results, info, clade, age, stage, reports, genus)
-                            
-                            if res_status == "added":
-                                main_species_count += 1
-                                # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
-                                fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
-                                with data_lock:
-                                    current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
-                                # ------------------------------
-                                audit_buffer.append({'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'is_extant': info['is_extant'], 'author': info['author'], 'year': info['year'], 'meta_note': current_meta_note})
-                                check_and_report_historical(item, true_genus, reports)
-                            elif res_status == "upgraded":
-                                main_species_count += 1
-                                # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
-                                fact_val = f"{info['status']} | {info['is_type']} | {info['author']} | {info['year']}"
-                                with data_lock:
-                                    current_session_facts[f"{info['genus']}:MAIN:{info['species']}"] = fact_val
-                                # ------------------------------
-                                audit_buffer.append({
-                                    'type': 'MAIN', 'genus': info['genus'], 'species': info['species'], 'status': info['status'], 'is_type': actual_is_type, 'is_extant': info['is_extant'], 'author': info['author'], 'year': info['year'],
-                                    'upgrade_note': '(upgraded metadata)', 'meta_note': current_meta_note
-                                })
-                            else:
-                                with data_lock: 
-                                    reports['duplicates'].append(f"{info['genus']} {info['species']} (main section repeat) (on {genus} page)")
-
-        # ШАГ 2: ПАРСИНГ СИНОНИМОВ
-        if FETCH_SYNONYMS:
-            for j, row in enumerate(rows):
-                header = row.find('th')
-                if header and "synonyms" in header.get_text().lower():
-                    data_td = rows[j+1].find('td')
-                    if data_td:
-                        li_items = data_td.find_all('li')
-                        if li_items:
-                            for li in li_items:
-                                s_info = extract_synonym_data(li, true_genus, genus_is_extant)
-                                if s_info:
-                                    s_species = s_info['species']
-                                    # Проверяем, есть ли реальное имя вида
-                                    if s_species and s_species != MISSING_VAL:
-                                        # 1. Проверка на дубликат внутри страницы
-                                        if s_species.lower() in seen_species_on_page:
-                                            audit_buffer.append(f"{genus}: [SYNONYM] {s_info['genus']} | {s_species} | {s_info['status']} | {s_info['author']} | {s_info['year']} (ignored, species epithet already processed)")
-                                            with data_lock:
-                                                reports['duplicates'].append(f"{s_info['genus']} {s_species} (epithet repeat) (on {genus} page)")
-                                            continue
-                                            
-                                        # 2. Попытка добавить в общую базу
-                                        res_status = add_species_to_results(all_results, s_info, clade, age, stage, reports, genus)
-                                        
-                                        if res_status == "added":
-                                            syn_species_count += 1
-                                            seen_species_on_page.add(s_species.lower())
-                                            # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
-                                            fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
-                                            with data_lock:
-                                                current_session_facts[f"{s_info['genus']}:SYNONYM:{s_species}"] = fact_val
-                                            # ------------------------------
-                                            audit_buffer.append({
-                                                'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
-                                                'status': s_info['status'], 'is_extant': s_info['is_extant'], 'author': s_info['author'], 'year': s_info['year']
-                                            })
-                                        elif res_status == "upgraded":
-                                            syn_species_count += 1
-                                            # --- ЗАПИСЬ ФАКТА ДЛЯ АУДИТА ---
-                                            fact_val = f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
-                                            with data_lock:
-                                                current_session_facts[f"{s_info['genus']}:SYNONYM:{s_species}"] = fact_val
-                                            # ------------------------------
-                                            audit_buffer.append({
-                                                'type': 'SYNONYM', 'genus': s_info['genus'], 'species': s_species,
-                                                'status': s_info['status'], 'is_extant': s_info['is_extant'], 'author': s_info['author'], 'year': s_info['year'],
-                                                'upgrade_note': '(status updated)'
-                                            })
-                                        else:
-                                            audit_buffer.append(f"{genus}: [SYNONYM] {s_info['genus']} | {s_species} | {s_info['status']} | {s_info['author']} | {s_info['year']} (ignored, global duplicate)")
-                                            with data_lock:
-                                                reports['duplicates'].append(f"{s_info['genus']} {s_species} (global duplicate) (on {genus} page)")
-                                    else:
-                                        # ВИДА НЕТ (Родовой синоним) — теперь это условие сработает!
-                                        audit_buffer.append(f"{genus}: [SYNONYM] {s_info['genus']} | - | {s_info['status']} | {s_info['author']} | {s_info['year']} (ignored, no species provided)")
-                    break 
-        else:
-            audit_buffer.append(f"{genus}: [SYNONYM] SKIPPED (fetching disabled by flag)")
-
-        # --- ОБРАБОТКА AUTO-ASSIGNED TYPE ---
-        total_found = main_species_count + syn_species_count
-        auto_type_triggered = False
-
-        if total_found == 1:
-            # Ищем этот единственный вид в результатах и ставим ему тип, если его нет
-            with data_lock:
-                for res in reversed(all_results):
-                    if res['genus'].lower() == genus.lower():
-                        if not res['is_type']:
-                            res['is_type'] = True
-                            auto_type_triggered = True
-                        break
-
-        # Собираем все строки текущего рода в единый список перед выводом
-        lines_to_flush = []
-        for entry in audit_buffer:
-          if isinstance(entry, dict):
-
-            def f(v):
-              if (
-                  v is None
-                  or v == ""
-                  or str(v).lower() == "unknown"
-                  or str(v) == MISSING_VAL
-              ):
-                return MISSING_VAL
-              return str(v)
-
-            upg = (
-                f" {entry.get('upgrade_note', '')}"
-                if entry.get('upgrade_note')
-                else ""
-            )
-            meta_info = (
-                f" {entry.get('meta_note', '')}"
-                if entry.get('meta_note')
-                else ""
-            )
-
-            if entry['type'] == 'MAIN':
-              display_type = True if auto_type_triggered else entry['is_type']
-              suffix = " (auto-assigned type)" if auto_type_triggered else ""
-              line = (
-                  f"{genus}: [MAIN] {f(entry['genus'])} |"
-                  f" {f(entry['species'])} | {f(entry['status'])} |"
-                  f" {f(display_type)} | {f(entry['is_extant'])} |"
-                  f" {f(entry['author'])} |"
-                  f" {f(entry['year'])}{suffix}{upg}{meta_info}"
-              )
-            else:
-              line = (
-                  f"{genus}: [SYNONYM] {f(entry['genus'])} |"
-                  f" {f(entry['species'])} | {f(entry['status'])} |"
-                  f" {f(entry['is_extant'])} | {f(entry['author'])} |"
-                  f" {f(entry['year'])}{upg}"
-              )
-            lines_to_flush.append(line)
-          else:
-            lines_to_flush.append(entry)
-
-        lines_to_flush.append(
-            f"{genus}: FINISHED (Found {main_species_count} main,"
-            f" {syn_species_count} synonyms)"
+      # [!] ПРОВЕРКА ЧУЖАКА (Шлагбаум для Бизона)
+      if s_gen_low != true_genus.lower():
+        target_url = s_info.get("url") or genus_syn_links.get(s_gen_low)
+        in_scope = is_synonym_in_scope(
+            s_gen, target_url, true_genus, session, audit_buffer
         )
 
-        # [!] АТОМАРНЫЙ СБРОС: один поток забирает ключ и пишет всю страницу целиком
-        with log_lock:
-          for line in lines_to_flush:
-            logging.info(line)
+        if not in_scope:
+          # ЧУЖАК (БИЗОН) — ВЫБРАСЫВАЕМ И ПИШЕМ WARNING!
+          warn_msg = (
+              f"{true_genus}: [SYNONYM EXCLUDED] {s_gen} | {s_sp} (Out of"
+              f" scope: {config.TAXONOMY_START_NODE} not found)"
+          )
+          audit_buffer.append(warn_msg)
+          logging.warning(warn_msg)  # <--- СРАЗУ В ЛОГ КАК WARNING
+          with data_lock:
+            reports["out_of_class"].append(
+                f"{true_genus}: [SYNONYM EXCLUDED] {s_gen} | {s_sp}"
+            )
+          continue
 
-        if total_found == 0:
-            logging.error(f"{genus}: ERROR (Found 0 species)")
-            with data_lock: reports['zero_species'].append(f"{genus}: 0 species extracted")
+      # СВОЙ ДИНОЗАВР — сохраняем в базу!
+      res = add_species_to_results(
+          all_results, s_info, clade, age, stage, reports, true_genus
+      )
+      if res in ["added", "upgraded"]:
+        syn_count += 1
+        seen_species.add(s_sp.lower())
+        with data_lock:
+          current_session_facts[f"{s_info['genus']}:SYNONYM:{s_sp}"] = (
+              f"{s_info['status']} | {s_info['author']} | {s_info['year']}"
+          )
+        upg = "(status updated)" if res == "upgraded" else ""
+        audit_buffer.append({
+            "type": "SYNONYM",
+            "genus": s_info["genus"],
+            "species": s_sp,
+            "status": s_info["status"],
+            "is_extant": s_info["is_extant"],
+            "author": s_info["author"],
+            "year": s_info["year"],
+            "upgrade_note": upg,
+        })
+      else:
+        audit_buffer.append(
+            f"{true_genus}: [SYNONYM] {s_info['genus']} | {s_sp} |"
+            f" {s_info['status']} | {s_info['author']} | {s_info['year']}"
+            " (ignored, global duplicate)"
+        )
+        with data_lock:
+          reports["duplicates"].append(f"{s_gen} {s_sp} (global duplicate)")
 
-    except Exception as e:
-        logging.error(f"{genus}: ERROR (Parsing failed: {e})")
+  return syn_count
+
+
+def flush_genus_logs(
+    genus, main_count, syn_count, all_results, audit_buffer, reports
+):
+  """Форматирование и вывод логов рода с поддержкой BUFFER_LOGS."""
+  total = main_count + syn_count
+  auto_type = False
+
+  if total == 1:
+    with data_lock:
+      for res in reversed(all_results):
+        if res['genus'].lower() == genus.lower() and not res['is_type']:
+          res['is_type'] = True
+          auto_type = True
+          break
+
+  formatted = []
+  for entry in audit_buffer:
+    if isinstance(entry, dict):
+
+      def f(v):
+        return (
+            MISSING_VAL
+            if (v is None or v == '' or str(v).lower() == 'unknown')
+            else str(v)
+        )
+
+      upg = f" {entry.get('upgrade_note', '')}" if entry.get('upgrade_note') else ''
+      meta = f" {entry.get('meta_note', '')}" if entry.get('meta_note') else ''
+
+      if entry['type'] == 'MAIN':
+        disp_type = True if auto_type else entry['is_type']
+        suf = ' (auto-assigned type)' if auto_type else ''
+        line = (
+            f"{genus}: [MAIN] {f(entry['genus'])} | {f(entry['species'])} |"
+            f" {f(entry['status'])} | {f(disp_type)} | {f(entry['is_extant'])}"
+            f" | {f(entry['author'])} | {f(entry['year'])}{suf}{upg}{meta}"
+        )
+      else:
+        line = (
+            f"{genus}: [SYNONYM] {f(entry['genus'])} | {f(entry['species'])} |"
+            f" {f(entry['status'])} | {f(entry['is_extant'])} |"
+            f" {f(entry['author'])} | {f(entry['year'])}{upg}"
+        )
+      formatted.append(line)
+    else:
+      formatted.append(entry)
+
+  formatted.append(
+      f"{genus}: FINISHED (Found {main_count} main, {syn_count} synonyms)"
+  )
+
+  if globals().get('BUFFER_LOGS', False):
+    with log_lock:
+      for line in formatted:
+        logging.info(line)
+  else:
+    for line in formatted:
+      logging.info(line)
+
+  if total == 0:
+    logging.error(f"{genus}: ERROR (Found 0 species)")
+    with data_lock:
+      reports['zero_species'].append(f"{genus}: 0 species extracted")
+
+
+def process_single_genus(genus, initial_status, session, all_results, reports):
+  """Компактный дирижер обработки рода (40 строк)."""
+  audit_buffer = []
+
+  # 1. Nomen nudum
+  if 'nudum' in str(initial_status).lower():
+    logging.info(f"{genus}: STUB CREATED (nomen nudum - skipping Wikipedia)")
+    stub = {
+        'genus': genus,
+        'species': MISSING_VAL,
+        'author': MISSING_VAL,
+        'year': MISSING_VAL,
+        'status': 'nudum',
+        'is_extant': False,
+    }
+    add_species_to_results(
+        all_results,
+        stub,
+        MISSING_VAL,
+        MISSING_VAL,
+        MISSING_VAL,
+        reports,
+        genus,
+    )
+    return
+
+  # 2. Скачивание страницы
+  infobox = fetch_genus_page(genus, session, reports)
+  if not infobox:
+    logging.error(f"{genus}: ERROR (No infobox found)")
+    with data_lock:
+      reports['no_infobox'].append(f"{genus}: No infobox found")
+    return
+
+  true_genus, clade, age, stage, g_auth, g_year, extant = (
+      extract_classification(infobox)
+  )
+  audit_buffer.append(f"{genus}: PARSING...")
+  age_disp = (
+      f"{str(age).strip()} Ma"
+      if str(age).strip() not in [MISSING_VAL, '']
+      else MISSING_VAL
+  )
+  audit_buffer.append(f"{genus}: [DATA] {clade} | {age_disp} | {stage}")
+  with data_lock:
+    current_session_facts[f'{genus}:DATA'] = (
+        f'{clade} | {age_disp} | {stage}'
+    )
+
+  # 3. Таксономия
+  clade = resolve_genus_taxonomy(genus, clade, session, audit_buffer, reports)
+  if not clade:
+    return
+
+  # 4. Основные виды и синонимы
+  rows = infobox.find_all('tr')
+  seen_species = set()
+  main_count = parse_main_section(
+      rows,
+      true_genus,
+      extant,
+      g_auth,
+      g_year,
+      clade,
+      age,
+      stage,
+      seen_species,
+      all_results,
+      reports,
+      audit_buffer,
+  )
+
+  syn_count = 0
+  if config.FETCH_SYNONYMS:
+    syn_count = parse_synonyms_section(
+        rows,
+        true_genus,
+        extant,
+        clade,
+        age,
+        stage,
+        seen_species,
+        all_results,
+        reports,
+        audit_buffer,
+        session,
+    )
+
+  # 5. Вывод логов
+  flush_genus_logs(
+      genus, main_count, syn_count, all_results, audit_buffer, reports
+  )
 
 def start_mass_parsing():
     global total_bytes_downloaded
@@ -1006,7 +1308,7 @@ def start_mass_parsing():
         'duplicates': [],
         'upgrades': [],
         'out_of_class': [],
-        'taxonomy_errors': []  # <--- Новый список
+        'taxonomy_errors': [],
     }
     
     session = requests.Session()
