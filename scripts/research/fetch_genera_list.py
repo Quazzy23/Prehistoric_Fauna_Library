@@ -177,7 +177,8 @@ def find_taxa_section_by_layout(infobox):
 def process_taxa_list(list_element, found_genera, new_branches, log_buffer):
     """
     Разбор списка по Идее 1 (делегирование):
-    Вложенные списки у ссылочных клад игнорируются, у NO_LINK — раскрываются.
+    Если ссылка новая — уходим на нее, вложенные списки пропускаем.
+    Если ссылки нет ИЛИ ссылка УЖЕ ПОСЕЩЕНА (редирект на себя) — раскрываем локально!
     """
     direct_items = list_element.find_all('li', recursive=False)
 
@@ -197,12 +198,21 @@ def process_taxa_list(list_element, found_genera, new_branches, log_buffer):
 
         elif action == 'LINK':
             clade_name, branch_url = clade_data
-            new_branches.append((clade_name, branch_url))
+            
+            # [!] ЗАЩИТА ОТ РЕДИРЕКТОВ НА СЕБЯ:
+            if branch_url in visited_urls:
+                # Ставим WARNING, так как это отклонение от идеального делегирования
+                log_buffer.append(('WARNING', f"CLADE (LINK BUT VISITED): {clade_name}. Parsing nested items locally."))
+                for nested_list in li.find_all(['ul', 'ol'], recursive=False):
+                    process_taxa_list(nested_list, found_genera, new_branches, log_buffer)
+            else:
+                new_branches.append((clade_name, branch_url))
             continue
 
         elif action == 'NO_LINK':
             clade_name = clade_data
-            log_buffer.append(('INFO', f"CLADE (NO LINK): {clade_name}"))
+            # Ставим WARNING, так как клада без страницы — это локальная распаковка
+            log_buffer.append(('WARNING', f"CLADE (NO LINK): {clade_name}"))
             for nested_list in li.find_all(['ul', 'ol'], recursive=False):
                 process_taxa_list(nested_list, found_genera, new_branches, log_buffer)
             continue
@@ -233,38 +243,20 @@ def process_single_page(current_url, session):
         soup = BeautifulSoup(resp.text, 'html.parser')
         infobox = soup.find('table', class_='infobox biota')
         
-        # Если вообще нет инфобокса — тогда да, выходим
+        # Если вообще нет инфобокса — выходим
         if not infobox:
             return found_genera, new_branches, log_buffer
 
         subgroups_td = find_taxa_section_by_layout(infobox)
 
-        # [!] ЖЕСТКОЕ УСЛОВИЕ: Ищем слова "see" или "text" и обязательное наличие ссылки в ячейке подгрупп
-        has_see_text = False
-        if subgroups_td:
-            td_text = subgroups_td.get_text(separator=" ", strip=True).lower()
-            has_link = bool(subgroups_td.find('a'))
-            if ("see" in td_text or "text" in td_text) and has_link:
-                has_see_text = True
-
-        # Если блок не найден ИЛИ в нем есть сигнал "see ... text" со ссылкой -> запускаем сканер таблиц
-        if not subgroups_td or has_see_text:
-            reason = "Empty infobox" if not subgroups_td else "Found 'see text' trigger"
-            warn_msg = f"FALLBACK (WIKITABLE USED - {reason}) for {page_title} ({current_url})"
-            log_buffer.append(('WARNING', warn_msg))
-
-            table_genera = parse_genera_from_wikitables(soup, current_url)
-            for g in table_genera:
-                found_genera.append(g)
-                log_buffer.append(('INFO', f"GENUS (TABLE): {g}"))
-
+        # Если блока подгрупп нет — это просто терминальная страница (лист дерева), выходим
+        if not subgroups_td:
             return found_genera, new_branches, log_buffer
 
         # --- СТАНДАРТНАЯ ЛОГИКА ОБХОДА ИНФОБОКСА ---
         collapsible_tables = subgroups_td.find_all('table', class_='mw-collapsible')
-        # ... дальше старый код обхода root_lists и collapsible_tables ...
 
-        # 1. Основные списки
+        # 1. Основные списки (прямые корневые <ul>)
         root_lists = [
             elem for elem in subgroups_td.find_all(['ul', 'ol'])
             if not elem.find_parent('li') and not any(tbl in elem.parents for tbl in collapsible_tables)
@@ -272,7 +264,7 @@ def process_single_page(current_url, session):
         for root_list in root_lists:
             process_taxa_list(root_list, found_genera, new_branches, log_buffer)
 
-        # 2. Свернутые таблицы (Possible)
+        # 2. Свернутые таблицы (Possible / Uncertain)
         for col_table in collapsible_tables:
             header_div = col_table.find('th')
             header_title = header_div.get_text(strip=True) if header_div else "Possible taxa"
@@ -465,53 +457,6 @@ def collect_genera():
     logger.info(f"[2] TOTAL GENERA DISCOVERED ({len(final_genera)})")
     logger.info("--- SCRIPT END: FETCH_GENERA_LIST ---")
 
-
-def parse_genera_from_wikitables(soup, current_url):
-  """Резервный парсер: сканирует вики-таблицы (wikitable) на страницах,
-
-  где инфобокс пуст или отправляет в текст (see text). Выдает WARNING в лог.
-  """
-  table_genera = set()
-  wikitables = soup.find_all('table', class_='wikitable')
-
-  for table in wikitables:
-    for row in table.find_all('tr'):
-      # Ищем все ссылки внутри курсива в таблице
-      for it in row.find_all('i'):
-        link = it.find('a')
-        if not link:
-          continue
-
-        raw_name = link.get_text(strip=True)
-        # Чистим от всего лишнего (крестики, вопросы, кавычки, сноски)
-        clean_name = (
-            raw_name.replace('†', '')
-            .replace('?', '')
-            .replace('"', '')
-            .replace('“', '')
-            .strip()
-        )
-
-        # Проверяем, что это похоже на имя рода (с заглавной буквы, без пробелов)
-        if (
-            clean_name
-            and clean_name[0].isupper()
-            and len(clean_name.split()) == 1
-            and len(clean_name) > 1
-        ):
-          bad_words = [
-              'genus',
-              'taxonomy',
-              'phylogeny',
-              'description',
-              'species',
-              'age',
-              'formation',
-          ]
-          if clean_name.lower() not in bad_words:
-            table_genera.add(clean_name)
-
-  return table_genera
 
 if __name__ == "__main__":
     collect_genera()

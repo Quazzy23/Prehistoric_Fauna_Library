@@ -39,7 +39,7 @@ RESEARCH_MODE = "dinosaurs"
 # suffixes      — суффиксы для поиска статей и шаблонов таксономии (разрешение неоднозначностей)
 WIKI_SETTINGS = {
     "dinosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Dinosauromorpha",
+        "start_url": "https://en.wikipedia.org/wiki/Dinosaur",
         "stop_url": "https://en.wikipedia.org/wiki/Avialae",
         "taxonomy_node": "Dinosauromorpha",
         "suffixes": ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]
