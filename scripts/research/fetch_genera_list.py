@@ -185,8 +185,13 @@ def process_taxa_list(list_element, found_genera, new_branches, log_buffer):
     for li in direct_items:
         g_name = parse_genus_name(li)
         if g_name:
-            found_genera.append(g_name)
-            log_buffer.append(('INFO', f"GENUS: {g_name}"))
+            with visited_lock:
+                if g_name in all_discovered_genera:
+                    log_buffer.append(('WARNING', f"GENUS: {g_name} (already exists)"))
+                else:
+                    all_discovered_genera.add(g_name)
+                    found_genera.append(g_name)
+                    log_buffer.append(('INFO', f"GENUS: {g_name}"))
             continue
 
         action, clade_data = parse_clade_item(li)
@@ -211,11 +216,22 @@ def process_taxa_list(list_element, found_genera, new_branches, log_buffer):
 
         elif action == 'NO_LINK':
             clade_name = clade_data
-            # Ставим WARNING, так как клада без страницы — это локальная распаковка
-            log_buffer.append(('WARNING', f"CLADE (NO LINK): {clade_name}"))
+            log_buffer.append(('WARNING', f'CLADE (NO LINK): {clade_name}'))
             for nested_list in li.find_all(['ul', 'ol'], recursive=False):
-                process_taxa_list(nested_list, found_genera, new_branches, log_buffer)
+                process_taxa_list(
+                    nested_list, found_genera, new_branches, log_buffer
+            )
             continue
+
+        # [!] РАСПАКОВКА ТЕХНИЧЕСКИХ ОБЕРТОК (КЕЙС ELASMOSAURIDAE / COLLAPSIBLE LIST)
+        # Если в li нет ни рода, ни клады, но внутри лежит вложенный список <ul> — заходим в него!
+        wrapper_nested = [
+            elem
+            for elem in li.find_all(['ul', 'ol'])
+            if elem.find_parent('li') == li
+        ]
+        for nested_list in wrapper_nested:
+          process_taxa_list(nested_list, found_genera, new_branches, log_buffer)
 
 
 def process_single_page(current_url, session):

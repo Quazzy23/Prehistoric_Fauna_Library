@@ -883,6 +883,66 @@ def resolve_genus_taxonomy(genus, clade, session, audit_buffer, reports):
   )
   return clade
 
+def extract_infobox_items(data_td):
+  """Универсальный разделитель видов в инфобоксе.
+
+  - Если есть <li> — отдает их (100% совместимость со старым кодом).
+  - Если 1 вид без списка — отдает [data_td] (100% совместимость).
+  - Если несколько видов в одном <p> через <br/> (кейс Shastasaurus) —
+  безопасно нарезает на отдельные элементы вместе с крестиком † и автором.
+  """
+  li_elements = data_td.find_all('li')
+  if li_elements:
+    return li_elements
+
+  # Ищем все видовые курсивы вне <small>
+  primary_i = [
+      it for it in data_td.find_all('i') if not it.find_parent('small')
+  ]
+  if len(primary_i) <= 1:
+    return [data_td]
+
+  items = []
+  for k, it in enumerate(primary_i):
+    item_soup = BeautifulSoup('<div></div>', 'html.parser')
+    container = item_soup.div
+
+    # Находим базовый узел строки (на случай если <i> обернут в <b> или <span>)
+    base_node = it
+    while (
+        base_node.parent
+        and base_node.parent != data_td
+        and base_node.parent.name not in ['p', 'div', 'td']
+    ):
+      base_node = base_node.parent
+
+    # Захватываем крестик вымирания † перед названием, если он есть
+    prev_node = base_node.find_previous_sibling()
+    if prev_node and (
+        '†' in prev_node.get_text() or prev_node.name in ['abbr', 'span']
+    ):
+      container.append(copy.copy(prev_node))
+
+    # Добавляем само название
+    container.append(copy.copy(base_node))
+
+    # Собираем автора, год и сноски до следующего видового <i>
+    next_it = primary_i[k + 1] if k + 1 < len(primary_i) else None
+    curr = base_node.find_next_sibling()
+
+    while curr:
+      # Если дошли до следующего вида — останавливаемся
+      if next_it and (
+          curr == next_it
+          or (hasattr(curr, 'find_all') and next_it in curr.find_all('i'))
+      ):
+        break
+      container.append(copy.copy(curr))
+      curr = curr.find_next_sibling()
+
+    items.append(container)
+
+  return items
 
 def parse_main_section(
     rows,
@@ -941,7 +1001,7 @@ def parse_main_section(
       if not data_td:
         continue
 
-      items = data_td.find_all('li') or [data_td]
+      items = extract_infobox_items(data_td)
       for item in items:
         is_type_header = 'type' in h_text or 'binomial' in h_text
         info = extract_data(item, true_genus, is_type_header, genus_is_extant)

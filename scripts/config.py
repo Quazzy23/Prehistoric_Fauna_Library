@@ -39,23 +39,36 @@ RESEARCH_MODE = "dinosaurs"
 # suffixes      — суффиксы для поиска статей и шаблонов таксономии (разрешение неоднозначностей)
 WIKI_SETTINGS = {
     "dinosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Dinosaur",
+        "start_url": "https://en.wikipedia.org/wiki/Dinosauromorpha",
         "stop_url": "https://en.wikipedia.org/wiki/Avialae",
         "taxonomy_node": "Dinosauromorpha",
         "suffixes": ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]
     },
     "pterosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Pterosauria",
+        "start_url": "https://en.wikipedia.org/wiki/Pterosauromorpha",
         "stop_url": None,
-        "taxonomy_node": "Pterosauria",
-        "suffixes": ["", "_(pterosaur)", "_(reptile)", "_(archosaur)"]
+        "taxonomy_node": "Pterosauromorpha",
+        "suffixes": ["", "_(pterosaur)", "_(reptile)"],
     },
-    "mammals": {
-        "start_url": "https://en.wikipedia.org/wiki/Mammalia",
+    "ichthyosaurs": {
+        "start_url": "https://en.wikipedia.org/wiki/Ichthyosauromorpha",
         "stop_url": None,
-        "taxonomy_node": "Mammalia",
-        "suffixes": ["", "_(mammal)", "_(synapsid)"]
-    }
+        "taxonomy_node": "Ichthyosauromorpha",
+        "suffixes": ["", "_(ichthyosaur)", "_(reptile)"],
+    },
+    "sauropterygians": {
+        "start_url": "https://en.wikipedia.org/wiki/Sauropterygiformes",
+        "stop_url": None,
+        "taxonomy_node": "Sauropterygiformes",
+        "suffixes": [
+            "", "_(plesiosaur)", "_(pliosaur)", "_(reptile)", "_(sauropterygian)"],
+    },
+    "mosasaurs": {
+        "start_url": "https://en.wikipedia.org/wiki/Mosasauria",
+        "stop_url": None,
+        "taxonomy_node": "Mosasauria",
+        "suffixes": ["", "_(mosasaur)", "_(reptile)", "_(lizard)"],
+    },
 }
 
 # Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
