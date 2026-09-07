@@ -69,6 +69,25 @@ WIKI_SETTINGS = {
         "taxonomy_node": "Mosasauria",
         "suffixes": ["", "_(mosasaur)", "_(reptile)", "_(lizard)"],
     },
+    # Добавлены для теста
+    "cariamiformes": {
+        "start_url": "https://en.wikipedia.org/wiki/Cariamiformes",
+        "stop_url": None,
+        "taxonomy_node": "Cariamiformes",
+        "suffixes": ["", "_(bird)"]
+    },
+    "dicynodonts": {
+        "start_url": "https://en.wikipedia.org/wiki/Dicynodontia",
+        "stop_url": None,
+        "taxonomy_node": "Dicynodontia",
+        "suffixes": ["", "_(reptile)"]
+    },
+    "elephants": {
+        "start_url": "https://en.wikipedia.org/wiki/Proboscidea",
+        "stop_url": None,
+        "taxonomy_node": "Proboscidea",
+        "suffixes": ["", "_(mammal)"]
+    },
 }
 
 # Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
@@ -102,7 +121,7 @@ if IS_MASTER:
     INCLUDE_UNCERTAIN_STAGES = False  # Только твердо установленные ярусы
 else:
     # --- СВОБОДНЫЕ НАСТРОЙКИ ДЛЯ SANDBOX (МЕНЯЙТЕ ДЛЯ ТЕСТОВ) ---
-    USE_CUSTOM_LIST          = True  # True — тест по файлу из custom_lists/
+    USE_CUSTOM_LIST          = False  # True — тест по файлу из custom_lists/
     FETCH_SYNONYMS           = True   # False — быстрый тест без синонимов
     INCLUDE_NOMINA_NUDA      = True   # False — исключить нудумы
     INCLUDE_UNCERTAIN_STAGES = False  # True — включать "Possible Albian"
@@ -158,14 +177,10 @@ HISTORY_FILE = "project_history.txt" if IS_MASTER else "sandbox_history.txt"
 
 
 # [8] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (SCIENTIFIC WEIGHTS)
-# Веса валидности для разрешения конфликтов. Чем меньше число, тем статус важнее.
+# 4 базовых научных статуса PFL
 STATUS_WEIGHTS = {
-    'excluded': 0,
-    'synonym': 1,
     'nudum': 1,
-    'preoccupied': 1,
-    'possible synonym': 2,
-    'possible nudum': 2,
-    'dubious': 3,
+    'dubious': 2,
+    'provisional': 3,
     'valid': 4
 }
