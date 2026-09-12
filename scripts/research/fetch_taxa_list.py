@@ -5,6 +5,8 @@ import os
 import re
 import csv
 import copy
+import html
+import json
 import logging
 import threading
 from urllib.parse import urljoin, urlparse, unquote
@@ -55,29 +57,86 @@ HEADERS = {'User-Agent': f'PrehistoricFaunaLibraryCollector/2.0 (mailto:{USER_EM
 START_PAGE = config.WIKI_START_URL
 STOP_PAGE = config.WIKI_STOP_URL
 
-# Секции инфобокса, где находятся дочерние таксоны
-TARGET_CHILD_HEADERS = [
-    "subgroups", "subdivision", "subdivisions", "subtaxa", "sub-taxa",
-    "families", "subfamilies", "tribes", "genera", "species", "subspecies",
-    "members", "included taxa", "included groups", "other species",
-    "major groups", "groups", "orders", "suborders", "clades"
-]
-
-# Секции, которые парсятся ИСКЛЮЧИТЕЛЬНО на страницах РОДА
+# Секции, которые парсятся ИСКЛЮЧИТЕЛЬНО на страницах РОДА (типовой вид)
 GENUS_ONLY_CHILD_HEADERS = [
     "type species", "type genus"
-]
-
-# Секции, которые строго запрещены везде
-FORBIDDEN_HEADERS = [
-    "synonyms", "synonymy", "fossil range", "temporal range", 
-    "conservation status", "scientific classification"
 ]
 
 # Потокобезопасные блокировки
 data_lock = threading.Lock()
 log_lock = threading.Lock()
 
+
+# Изначально в кэше подтвержденных потомков только сам стартовый узел
+scope_cache = {
+    config.TAXONOMY_START_NODE.lower().strip(): True
+}
+scope_lock = threading.Lock()
+
+def is_in_taxonomy_scope(taxon_name, session, infobox=None):
+    """
+    Проверяет принадлежность к config.TAXONOMY_START_NODE (Фильтр Бизона).
+    Ищет start_node в таблице предков Template:Taxonomy.
+    """
+    start_node = config.TAXONOMY_START_NODE.lower().strip()
+    t_clean = taxon_name.lower().strip()
+
+    if not t_clean:
+        return False
+
+    if t_clean == start_node:
+        return True
+
+    # 1. Проверка по кэшу подтвержденных таксонов
+    with scope_lock:
+        if t_clean in scope_cache:
+            return scope_cache[t_clean]
+
+    # 3. Переход по ссылке на Template:Taxonomy
+    taxo_a = infobox.find('a', href=re.compile(r'Template:Taxonomy/', re.I)) if infobox else None
+    if taxo_a and taxo_a.get('href'):
+        raw_href = taxo_a.get('href').split('#')[0]
+        taxo_url = urljoin(config.BASE_WIKI_URL, raw_href)
+    else:
+        taxo_url = f"{config.BASE_WIKI_URL}Template:Taxonomy/{taxon_name}"
+
+    try:
+        resp = session.get(taxo_url, timeout=10)
+        if resp.status_code == 200:
+            soup_taxo = BeautifulSoup(resp.text, 'html.parser')
+            
+            # Находим таблицу таксономии в шаблоне
+            taxo_table = soup_taxo.find('table', class_=re.compile(r'taxonomy|wikitable|infobox', re.I))
+            search_area = taxo_table if taxo_table else soup_taxo
+
+            # Ищем ссылку на start_node (например, Dinosauromorpha) внутри таблицы предков
+            for a in search_area.find_all('a'):
+                href = a.get('href', '').lower()
+                a_text = clean_text(a.get_text(strip=True)).lower()
+
+                # Пропускаем пустые ссылки
+                if not href and not a_text:
+                    continue
+
+                # Ищем целевой start_node (например, dinosauromorpha)
+                if start_node in href or a_text == start_node:
+                    with scope_lock:
+                        scope_cache[t_clean] = True
+                    return True
+
+                # Проверяем по подтвержденным узлам в кэше
+                with scope_lock:
+                    if (a_text and scope_cache.get(a_text) is True) or any(node in href for node, ok in scope_cache.items() if ok and node):
+                        scope_cache[t_clean] = True
+                        return True
+
+    except Exception as e:
+        logger.error(f"Taxonomy fetch failed for {taxon_name}: {e}")
+
+    # Если в Template:Taxonomy нет start_node — таксон ЧУЖОЙ (как Smok)
+    with scope_lock:
+        scope_cache[t_clean] = False
+    return False
 
 # ==============================================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -93,12 +152,25 @@ def clean_text(raw_text):
 
 
 def is_stop_boundary(url):
-    """Проверяет достижение стоп-границы дерева (например, Avialae)."""
+    """
+    Проверяет достижение любой из стоп-границ (поддерживает строку, список или None).
+    """
     if not STOP_PAGE or not url:
         return False
-    target_slug = urlparse(STOP_PAGE).path.strip('/').split('/')[-1].lower()
-    current_slug = urlparse(url).path.strip('/').split('/')[-1].lower()
-    return target_slug == current_slug
+
+    current_slug = unquote(urlparse(url).path.strip('/').split('/')[-1]).lower().replace('_', ' ')
+
+    # Приводим к списку, даже если передана одна строка
+    stop_list = STOP_PAGE if isinstance(STOP_PAGE, (list, tuple, set)) else [STOP_PAGE]
+
+    for stop_item in stop_list:
+        if not stop_item:
+            continue
+        stop_slug = unquote(urlparse(stop_item).path.strip('/').split('/')[-1]).lower().replace('_', ' ')
+        if current_slug == stop_slug:
+            return True
+
+    return False
 
 
 def normalize_wiki_url(href):
@@ -174,20 +246,59 @@ def get_page_rank_and_name(infobox, fallback_name):
 
 def clean_node_from_metadata(element):
     cleaned = copy.copy(element)
+    
+    # 1. Безопасно удаляем сноски и теги small
     for tag in cleaned.find_all(['sup', 'small']):
         tag.decompose()
-    for span in cleaned.find_all('span'):
-        style = span.get('style', '').lower()
-        if 'font-size' in style or 'small' in span.get('class', []):
-            span.decompose()
+        
+    # 2. Безопасно удаляем теги с уменьшенным шрифтом (авторы, даты)
+    for tag in cleaned.find_all(['span', 'div', 'p']):
+        if not hasattr(tag, 'attrs') or tag.attrs is None:
+            continue
+            
+        style = str(tag.attrs.get('style', '')).lower()
+        classes = tag.attrs.get('class', [])
+        if isinstance(classes, list):
+            class_str = " ".join(classes).lower()
+        else:
+            class_str = str(classes).lower()
+
+        if 'font-size' in style or '85%' in style or 'small' in class_str:
+            tag.decompose()
+
     return cleaned
 
 
 def parse_tree_items(element, is_genus_page):
     items = []
-    li_list = element.find_all('li', recursive=False)
+
+    # Если передан ul/ol — берем его прямые li
+    if element.name in ['ul', 'ol']:
+        li_list = element.find_all('li', recursive=False)
+    else:
+        # Если передан td — ищем его списки
+        direct_ul = element.find(['ul', 'ol'], recursive=False)
+        if direct_ul:
+            li_list = direct_ul.find_all('li', recursive=False)
+        else:
+            li_list = element.find_all('li', recursive=False)
+
+    # Если li нет вообще (простой текст со ссылками через br)
     if not li_list:
-        li_list = element.find_all('li')
+        clean_container = clean_node_from_metadata(element)
+        for a in clean_container.find_all('a'):
+            if a.get('href', '').startswith('#'):
+                continue
+            if is_genus_page:
+                is_italic = bool(a.find_parent(['i', 'em']) or a.find(['i', 'em']))
+                if not is_italic:
+                    continue
+            norm_url = normalize_wiki_url(a.get('href', ''))
+            if norm_url:
+                t_name = clean_text(a.get_text(strip=True))
+                if t_name and t_name[0].isalpha():
+                    items.append(('LINK', t_name, norm_url))
+        return items
 
     for li in li_list:
         li_header = copy.copy(li)
@@ -196,27 +307,28 @@ def parse_tree_items(element, is_genus_page):
 
         clean_header = clean_node_from_metadata(li_header)
 
-        # 1. Проверяем наличие ссылки в заголовке
-        a_tag = clean_header.find('a')
-        has_valid_link = False
-
-        if a_tag and not a_tag.get('href', '').startswith('#'):
+        # Собираем все ссылки из заголовка этого li
+        found_links = []
+        for a_tag in clean_header.find_all('a'):
+            if a_tag.get('href', '').startswith('#'):
+                continue
             norm_url = normalize_wiki_url(a_tag.get('href', ''))
-            if norm_url:
-                t_name = clean_text(a_tag.get_text(strip=True))
+            if not norm_url:
+                continue
 
-                # На странице рода ссылка ОБЯЗАНА быть курсивной
-                if is_genus_page:
-                    is_italic = bool(a_tag.find_parent(['i', 'em']) or a_tag.find(['i', 'em']))
-                    if not is_italic:
-                        norm_url = None
+            t_name = clean_text(a_tag.get_text(strip=True))
+            if is_genus_page:
+                is_italic = bool(a_tag.find_parent(['i', 'em']) or a_tag.find(['i', 'em']))
+                if not is_italic:
+                    continue
 
-                if norm_url and t_name and t_name[0].isalpha():
-                    items.append(('LINK', t_name, norm_url))
-                    has_valid_link = True
+            if t_name and t_name[0].isalpha():
+                found_links.append(('LINK', t_name, norm_url))
 
-        # 2. Если ссылки НЕ было:
-        if not has_valid_link:
+        if found_links:
+            items.extend(found_links)
+        else:
+            # Ссылок нет — это NO_LINK
             if not is_genus_page:
                 is_italic = bool(clean_header.find(['i', 'em']))
                 if not is_italic:
@@ -227,7 +339,7 @@ def parse_tree_items(element, is_genus_page):
                         if first_word and first_word[0].isupper() and not any(c.isdigit() for c in first_word):
                             items.append(('NO_LINK', first_word, None))
 
-            # Во вложенный список ныряем ТОЛЬКО если у текущей клады НЕ было своей ссылки
+            # Ныряем во вложенный список ТОЛЬКО если в строке не было своих ссылок
             for sub_list in li.find_all(['ul', 'ol'], recursive=False):
                 items.extend(parse_tree_items(sub_list, is_genus_page))
 
@@ -238,54 +350,70 @@ def extract_child_items_from_infobox(infobox, is_genus_page=False):
     all_items = []
     rows = infobox.find_all('tr')
 
-    for i, tr in enumerate(rows):
+    # 1. Если мы на странице РОДА: дополнительно берем Type species
+    if is_genus_page:
+        for tr in rows:
+            th = tr.find('th')
+            if th and any(tg in th.get_text(" ", strip=True).lower() for tg in GENUS_ONLY_CHILD_HEADERS):
+                td = tr.find('td') or (tr.find_next_sibling('tr').find('td') if tr.find_next_sibling('tr') else None)
+                if td:
+                    all_items.extend(parse_tree_items(td, is_genus_page=True))
+
+    # 2. Ищем строки данных потомков (СТРОГО ПОСЛЕ классификации)
+    handled_tds = set()
+    passed_classification = False
+
+    for tr in rows:
         th = tr.find('th')
-        if not th:
+        th_text = th.get_text(" ", strip=True).lower() if th else ""
+
+        # Дошли до синонимов — ЖЕСТКИЙ СТОП
+        if "synonym" in th_text:
+            break
+
+        # Отслеживаем классификацию предков
+        if "scientific classification" in th_text:
+            passed_classification = True
             continue
 
-        h_text = th.get_text(" ", strip=True).lower()
-        if any(ex in h_text for ex in FORBIDDEN_HEADERS):
+        tds = tr.find_all(['td', 'th'])
+        if len(tds) >= 2 and ":" in tds[0].get_text():
+            passed_classification = True
             continue
 
-        if not is_genus_page and any(tg in h_text for tg in GENUS_ONLY_CHILD_HEADERS):
+        # [!] ПОКА КЛАССИФИКАЦИЯ НЕ ПРОЙДЕНА — пропускаем всё для ЛЮБЫХ страниц (шапку, картинки, подписи к фото)
+        if not passed_classification:
             continue
 
-        is_type_block = is_genus_page and any(tg in h_text for tg in GENUS_ONLY_CHILD_HEADERS)
-        is_target = is_type_block or any(target in h_text for target in TARGET_CHILD_HEADERS)
-        if not is_target:
+        # [!] На кладе блокируем Type species / Type genus и САМИХ ИХ ЯЧЕЙКИ:
+        if not is_genus_page and any(tg in th_text for tg in GENUS_ONLY_CHILD_HEADERS):
+            # Помечаем и текущий td, и td следующей строки как отработанные, чтобы не прочитать их как потомков!
+            bad_td = tr.find('td') or (tr.find_next_sibling('tr').find('td') if tr.find_next_sibling('tr') else None)
+            if bad_td:
+                handled_tds.add(id(bad_td))
             continue
 
+        # Пропускаем геологию, кладограммы и статус
+        if any(ign in th_text for ign in ["temporal range", "fossil range", "conservation status", "binomial name", "cladogram", "phylogeny"]):
+            continue
+
+        # Находим td в текущей строке или в следующей (если th был colspan=2)
         td = tr.find('td')
-        if not td:
+        if not td and th and th.get('colspan') == '2':
             next_tr = tr.find_next_sibling('tr')
             if next_tr:
                 td = next_tr.find('td')
 
-        if not td:
-            continue
-
-        root_lists = [
-            ul for ul in td.find_all(['ul', 'ol'])
-            if not ul.find_parent('li')
-        ]
-
-        if root_lists:
-            for r_list in root_lists:
-                all_items.extend(parse_tree_items(r_list, is_genus_page))
-        else:
-            clean_td = clean_node_from_metadata(td)
-            for a in clean_td.find_all('a'):
-                if a.get('href', '').startswith('#'):
-                    continue
-                if is_genus_page:
-                    is_italic = bool(a.find_parent(['i', 'em']) or a.find(['i', 'em']))
-                    if not is_italic:
-                        continue
-                norm_url = normalize_wiki_url(a.get('href', ''))
-                if norm_url:
-                    t_name = clean_text(a.get_text(strip=True))
-                    if t_name and t_name[0].isalpha():
-                        all_items.append(('LINK', t_name, norm_url))
+        # Защита от дублирования одной и той же ячейки
+        if td and id(td) not in handled_tds:
+            handled_tds.add(id(td))
+            
+            root_lists = [ul for ul in td.find_all(['ul', 'ol']) if not ul.find_parent('li')]
+            if root_lists:
+                for r_list in root_lists:
+                    all_items.extend(parse_tree_items(r_list, is_genus_page))
+            else:
+                all_items.extend(parse_tree_items(td, is_genus_page))
 
     return all_items
 
@@ -297,9 +425,11 @@ def extract_child_items_from_infobox(infobox, is_genus_page=False):
 def inspect_single_page(display_name, page_url, session):
     """
     Скачивает одну страницу и возвращает:
-    (rank, actual_name, final_url, parent_genus, child_links, warnings)
+    (rank, actual_name, final_url, parent_genus, child_items, warnings)
     """
     warnings = []
+
+    # 1. Проверка стоп-границы ДО запроса (по исходному URL)
     if is_stop_boundary(page_url):
         warnings.append(('WARNING', f"CLADE (BOUNDARY STOP): {display_name}"))
         return 'STOP', display_name, page_url, None, [], warnings
@@ -313,28 +443,44 @@ def inspect_single_page(display_name, page_url, session):
         warnings.append(('ERROR', f"Failed to fetch {page_url}: {e}"))
         return 'ERROR', display_name, page_url, None, [], warnings
 
+    # 2. Определение канонического URL (после редиректа)
     canonical_tag = soup.find('link', rel='canonical')
     if canonical_tag and canonical_tag.get('href'):
         final_url = normalize_wiki_url(canonical_tag['href']) or resp.url
     else:
         final_url = normalize_wiki_url(resp.url) or page_url
 
+    # 3. Название статьи из заголовка H1
+    h1 = soup.find('h1', id='firstHeading')
+    actual_title = clean_text(h1.get_text(strip=True)) if h1 else display_name
+
+    # 4. Проверка стоп-границы ПОСЛЕ редиректа (например, Saphornithischia -> Ornithischia)
+    if is_stop_boundary(final_url):
+        warnings.append(('WARNING', f"CLADE (BOUNDARY STOP): {actual_title}"))
+        return 'STOP', actual_title, final_url, None, [], warnings
+
+    # 5. Единственная фиксация редиректа (без дублирования!)
+    if final_url != page_url and (display_name.lower() != actual_title.lower() and display_name.lower() not in actual_title.lower()):
+        warnings.append(('WARNING', f"REDIRECT: {display_name} -> {actual_title}"))
+
+    # 6. Инфобокс страницы
     infobox = soup.find('table', class_=re.compile(r'infobox(\s+.*biota.*)?'))
     if not infobox:
         return 'NO_INFOBOX', display_name, final_url, None, [], warnings
 
-    h1 = soup.find('h1', id='firstHeading')
-    actual_title = clean_text(h1.get_text(strip=True)) if h1 else display_name
-
-    if final_url != page_url or (display_name.lower() != actual_title.lower() and display_name.lower() not in actual_title.lower()):
-        warnings.append(('WARNING', f"REDIRECT: {display_name} -> {actual_title}"))
-
+    # 7. Определение ранга страницы (SPECIES / GENUS / CLADE)
     rank, actual_name, parent_genus = get_page_rank_and_name(infobox, actual_title)
 
+    # 8. Фильтр Бизона (проверка принадлежности к TAXONOMY_START_NODE)
+    taxon_to_check = parent_genus if parent_genus else actual_name
+    if not is_in_taxonomy_scope(taxon_to_check, session, infobox):
+        warnings.append(('WARNING', f"OUT OF SCOPE: {taxon_to_check} ({config.TAXONOMY_START_NODE} not in taxonomy)"))
+        return 'OUT_OF_SCOPE', actual_name, final_url, None, [], warnings
+
+    # 9. Сбор дочерних таксонов
     is_genus = (rank == "GENUS")
     raw_children = extract_child_items_from_infobox(infobox, is_genus_page=is_genus)
 
-    # Возвращаем единый упорядоченный список элементов (и ссылки, и NO_LINK)
     return rank, actual_name, final_url, parent_genus, raw_children, warnings
 
 
@@ -374,10 +520,98 @@ def record_result(rank, actual_name, final_url, parent_genus, orig_name, target_
 
 
 # ==============================================================================
-# РЕЖИМ 1: ПОШАГОВЫЙ DFS (FAST_CRAWL = False)
+# ЕДИНОЕ ЯДРО ОБРАБОТКИ РЕЗУЛЬТАТОВ (ОБЩЕЕ ДЛЯ ВСЕХ РЕЖИМОВ)
 # ==============================================================================
 
-def dfs_process_page(display_name, page_url, session, target_manifest, discovered_genera, visited_urls):
+def process_page_result(orig_name, orig_url, expected_genus, inspect_res, target_manifest, discovered_genera, visited_urls):
+    rank, actual_name, final_url, parent_genus, child_items, warnings = inspect_res
+
+    # 1. Сначала выводим все предупреждения (включая REDIRECT!)
+    with log_lock:
+        for level, msg in warnings:
+            if level == 'WARNING': logger.warning(msg)
+            elif level == 'ERROR': logger.error(msg)
+
+    if rank in ['STOP', 'ERROR', 'NO_INFOBOX', 'OUT_OF_SCOPE']:
+        with data_lock:
+            visited_urls.add(orig_url)
+            visited_urls.add(final_url)
+        return []
+
+    # 2. Если страница после редиректа УЖЕ была посещена ранее (как Saphornithischia -> Ornithischia)
+    if final_url in visited_urls and orig_url != final_url:
+        with log_lock:
+            logger.warning(f"CLADE (ALREADY VISITED): {actual_name}")
+        with data_lock:
+            visited_urls.add(orig_url)
+        return []
+
+    # 1. Защита от омонимов (коллизий таксонов)
+    if expected_genus:
+        is_foreign_clade = (rank == "CLADE")
+        is_foreign_genus = (rank == "GENUS" and actual_name.lower() != expected_genus.lower())
+        is_foreign_species = (rank == "SPECIES" and parent_genus and parent_genus.lower() != expected_genus.lower())
+
+        if is_foreign_clade or is_foreign_genus or is_foreign_species:
+            with log_lock:
+                logger.warning(f"OUT OF SCOPE (HOMONYM COLLISION): {expected_genus} -> {actual_name} ({final_url})")
+            return []
+
+    # 2. Фиксация посещения и запись результатов
+    next_tasks = []
+    with data_lock:
+        visited_urls.add(orig_url)
+        visited_urls.add(final_url)
+
+        if rank == "SPECIES":
+            if parent_genus and (orig_name.lower() == parent_genus.lower() or parent_genus not in discovered_genera):
+                discovered_genera.add(parent_genus)
+                with log_lock: logger.info(f"GENUS: {parent_genus} ({final_url})")
+                target_manifest.append({'taxon': parent_genus, 'url': final_url, 'rank': 'genus'})
+            else:
+                with log_lock: logger.info(f"SPECIES: {actual_name} ({final_url})")
+                target_manifest.append({'taxon': actual_name, 'url': final_url, 'rank': 'species'})
+
+        elif rank == "GENUS":
+            if actual_name in discovered_genera:
+                with log_lock: logger.warning(f"GENUS (ALREADY VISITED): {actual_name}")
+            else:
+                discovered_genera.add(actual_name)
+                with log_lock: logger.info(f"GENUS: {actual_name} ({final_url})")
+                target_manifest.append({'taxon': actual_name, 'url': final_url, 'rank': 'genus'})
+
+        elif rank == "CLADE":
+            with log_lock: logger.info(f"CLADE: {orig_name}")
+
+        # 3. Подготовка следующих дочерних задач в исходном хронологическом порядке
+        if rank in ["CLADE", "GENUS"]:
+            next_expected = actual_name if rank == "GENUS" else expected_genus
+            for item in child_items:
+                if item[0] == 'LINK':
+                    c_name, c_url = item[1], item[2]
+                    if is_stop_boundary(c_url):
+                        with log_lock: logger.warning(f"CLADE (BOUNDARY STOP): {c_name}")
+                        continue
+                    # Если ссылка уже посещена — передаем как задачу в очередь, чтобы напечатать строго по порядку!
+                    if c_url in visited_urls:
+                        next_tasks.append(('ALREADY_VISITED', c_name, c_url, None))
+                        continue
+                    next_tasks.append(('LINK', c_name, c_url, next_expected))
+                elif item[0] == 'NO_LINK':
+                    next_tasks.append(('NO_LINK', item[1], None, None))
+
+        if not config.BRIEF_CONSOLE:
+            sys.stdout.write(f"\rDiscovered: [Genera: {len(discovered_genera)}] [Targets: {len(target_manifest)}]")
+            sys.stdout.flush()
+
+    return next_tasks
+
+
+# ==============================================================================
+# ДИСПЕТЧЕРЫ ОБХОДА: ПОШАГОВЫЙ (DFS) И БЫСТРЫЙ (BFS/THREADPOOL)
+# ==============================================================================
+
+def dfs_process_page(display_name, page_url, session, target_manifest, discovered_genera, visited_urls, expected_genus=None):
     if is_stop_boundary(page_url):
         logger.warning(f"CLADE (BOUNDARY STOP): {display_name}")
         return
@@ -386,48 +620,24 @@ def dfs_process_page(display_name, page_url, session, target_manifest, discovere
         logger.warning(f"CLADE (ALREADY VISITED): {display_name}")
         return
 
-    rank, actual_name, final_url, parent_genus, child_items, warnings = inspect_single_page(display_name, page_url, session)
+    inspect_res = inspect_single_page(display_name, page_url, session)
+    next_tasks = process_page_result(display_name, page_url, expected_genus, inspect_res, target_manifest, discovered_genera, visited_urls)
 
-    visited_urls.add(page_url)
-    visited_urls.add(final_url)
+    for task_type, c_name, c_url, next_exp in next_tasks:
+        if task_type == 'LINK':
+            dfs_process_page(c_name, c_url, session, target_manifest, discovered_genera, visited_urls, next_exp)
+        elif task_type == 'NO_LINK':
+            logger.warning(f"CLADE (NO LINK): {c_name}")
+        elif task_type == 'ALREADY_VISITED':
+            logger.warning(f"CLADE (ALREADY VISITED): {c_name}")
 
-    # Выводим редиректы и ошибки самой страницы
-    for level, msg in warnings:
-        if level == 'WARNING': logger.warning(msg)
-        elif level == 'ERROR': logger.error(msg)
-
-    if rank in ['STOP', 'ERROR', 'NO_INFOBOX']:
-        return
-
-    # 1. Сначала логируем текущую страницу (CLADE: Phorusrhacidae или род/вид)
-    record_result(rank, actual_name, final_url, parent_genus, display_name, target_manifest, discovered_genera)
-
-    if not config.BRIEF_CONSOLE:
-        sys.stdout.write(f"\rDiscovered: [Genera: {len(discovered_genera)}] [Targets: {len(target_manifest)}]")
-        sys.stdout.flush()
-
-    # 2. Затем идем строго по порядку появления дочерних элементов в HTML!
-    if rank in ["CLADE", "GENUS"]:
-        for item in child_items:
-            item_type = item[0]
-            if item_type == 'LINK':
-                c_name, c_url = item[1], item[2]
-                if c_url not in [page_url, final_url]:
-                    dfs_process_page(c_name, c_url, session, target_manifest, discovered_genera, visited_urls)
-            elif item_type == 'NO_LINK':
-                # ВОРНИНГ ВЫВОДИТСЯ СТРОГО НА СВОЕМ МЕСТЕ В ДЕРЕВЕ!
-                logger.warning(f"CLADE (NO LINK): {item[1]}")
-                
-
-# ==============================================================================
-# РЕЖИМ 2: БЫСТРЫЙ BFS / МНОГОПОТОК (FAST_CRAWL = True)
-# ==============================================================================
 
 def fast_crawl_bfs(root_name, start_url, session, target_manifest, discovered_genera, visited_urls):
+    """Быстрый параллельный обход через очередь задач."""
     use_parallel = getattr(config, 'USE_PARALLEL', False)
     max_workers = getattr(config, 'MAX_WORKERS', 20) if use_parallel else 1
 
-    queue = [(root_name, start_url)]
+    queue = [(root_name, start_url, None)]
     visited_urls.add(start_url)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -437,50 +647,31 @@ def fast_crawl_bfs(root_name, start_url, session, target_manifest, discovered_ge
                 batch.append(queue.pop(0))
 
             future_to_item = {
-                executor.submit(inspect_single_page, name, url, session): (name, url)
-                for name, url in batch
+                executor.submit(inspect_single_page, name, url, session): (name, url, exp_genus)
+                for name, url, exp_genus in batch
             }
 
             for future in as_completed(future_to_item):
-                orig_name, orig_url = future_to_item[future]
+                orig_name, orig_url, exp_genus = future_to_item[future]
                 try:
-                    rank, actual_name, final_url, parent_genus, child_items, warnings = future.result()
+                    inspect_res = future.result()
                 except Exception as e:
                     logger.error(f"Task error on {orig_url}: {e}")
                     continue
 
-                with log_lock:
-                    for level, msg in warnings:
-                        if level == 'WARNING':
-                            logger.warning(msg)
-                        elif level == 'ERROR':
-                            logger.error(msg)
+                next_tasks = process_page_result(orig_name, orig_url, exp_genus, inspect_res, target_manifest, discovered_genera, visited_urls)
 
                 with data_lock:
-                    visited_urls.add(orig_url)
-                    visited_urls.add(final_url)
-                    record_result(rank, actual_name, final_url, parent_genus, orig_name, target_manifest, discovered_genera)
-
-                    # Разбираем дочерние элементы по типам: LINK или NO_LINK
-                    if rank in ["CLADE", "GENUS"]:
-                        for item in child_items:
-                            item_type = item[0]
-                            if item_type == 'LINK':
-                                c_name, c_url = item[1], item[2]
-                                if is_stop_boundary(c_url):
-                                    with log_lock:
-                                        logger.warning(f"CLADE (BOUNDARY STOP): {c_name}")
-                                    continue
-                                if c_url not in visited_urls and not any(q[1] == c_url for q in queue):
-                                    visited_urls.add(c_url)
-                                    queue.append((c_name, c_url))
-                            elif item_type == 'NO_LINK':
-                                with log_lock:
-                                    logger.warning(f"CLADE (NO LINK): {item[1]}")
-
-                if not config.BRIEF_CONSOLE:
-                    sys.stdout.write(f"\rDiscovered: [Genera: {len(discovered_genera)}] [Targets: {len(target_manifest)}]")
-                    sys.stdout.flush()
+                    for task_type, c_name, c_url, next_exp in next_tasks:
+                        if task_type == 'LINK':
+                            if not any(q[1] == c_url for q in queue):
+                                visited_urls.add(c_url)
+                                queue.append((c_name, c_url, next_exp))
+                        elif task_type == 'NO_LINK':
+                            with log_lock: logger.warning(f"CLADE (NO LINK): {c_name}")
+                        elif task_type == 'ALREADY_VISITED':
+                            with log_lock:
+                                logger.warning(f"CLADE (ALREADY VISITED): {c_name}")
 
 
 # ==============================================================================
@@ -495,14 +686,15 @@ def crawl_tree():
 
     logger.info("--- SCRIPT START: FETCH_TAXA_LIST ---")
     logger.info(f"Research Mode: {config.RESEARCH_MODE}")
-    logger.info(f"Fast Crawl Mode: {FAST_CRAWL}")
-    logger.info(f"Config Parallel: {getattr(config, 'USE_PARALLEL', False)} (Workers: {getattr(config, 'MAX_WORKERS', 1)})")
     logger.info(f"Start URL: {START_PAGE}")
-    logger.info(f"Stop URL: {STOP_PAGE if STOP_PAGE else 'None'}")
+    if isinstance(STOP_PAGE, (list, tuple)):
+        logger.info(f"Stop URLs: {', '.join(STOP_PAGE)}")
+    else:
+        logger.info(f"Stop URL: {STOP_PAGE if STOP_PAGE else 'None'}")
 
     session = requests.Session()
     session.headers.update(HEADERS)
-    if getattr(config, 'USE_PARALLEL', False):
+    if getattr(config, 'USE_PARALLEL', False) and FAST_CRAWL:
         adapter = requests.adapters.HTTPAdapter(pool_connections=config.MAX_WORKERS, pool_maxsize=config.MAX_WORKERS)
         session.mount('https://', adapter)
 
@@ -510,9 +702,8 @@ def crawl_tree():
     discovered_genera = set()
     visited_urls = set()
 
-    root_name = config.RESEARCH_MODE.capitalize()
+    root_name = unquote(urlparse(START_PAGE).path.strip('/').split('/')[-1]).replace('_', ' ')
 
-    # 1. Режим кастомного списка
     if config.USE_CUSTOM_LIST and os.path.exists(CUSTOM_LIST_PATH):
         logger.info(f"Custom list mode active: reading {CUSTOM_LIST_PATH}")
         with open(CUSTOM_LIST_PATH, 'r', encoding='utf-8') as f:
@@ -525,8 +716,6 @@ def crawl_tree():
             else:
                 dfs_process_page(name, g_url, session, target_manifest, discovered_genera, visited_urls)
     else:
-        # 2. Полноценный обход дерева: имя стартовой клады берем из самого URL, а не из RESEARCH_MODE
-        root_name = unquote(urlparse(START_PAGE).path.strip('/').split('/')[-1]).replace('_', ' ')
         if FAST_CRAWL:
             fast_crawl_bfs(root_name, START_PAGE, session, target_manifest, discovered_genera, visited_urls)
         else:
@@ -536,11 +725,8 @@ def crawl_tree():
         print()
         print("Crawl completed.")
 
-    # ==============================================================================
-    # СОХРАНЕНИЕ
-    # ==============================================================================
+    # Сохранение только target_pages.csv
     os.makedirs(TABLES_DIR, exist_ok=True)
-
     try:
         with open(TARGET_PAGES_CSV, 'w', newline='', encoding='utf-8-sig') as f:
             writer = csv.writer(f, delimiter=';')

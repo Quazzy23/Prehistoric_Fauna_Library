@@ -88,6 +88,18 @@ WIKI_SETTINGS = {
         "taxonomy_node": "Proboscidea",
         "suffixes": ["", "_(mammal)"]
     },
+    "psedosuchians": {
+        "start_url": "https://en.wikipedia.org/wiki/Pseudosuchia",
+        "stop_url": None,
+        "taxonomy_node": "Pseudosuchia",
+        "suffixes": ["", "_(crocodile)"]
+    },
+    "archosaurs": {
+        "start_url": "https://en.wikipedia.org/wiki/Archosauriformes",
+        "stop_url": "https://en.wikipedia.org/wiki/Avialae",
+        "taxonomy_node": "Pseudosuchia",
+        "suffixes": ["", "_kk"]
+    },
 }
 
 # Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
