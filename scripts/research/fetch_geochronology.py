@@ -197,13 +197,14 @@ def fetch_geochronology():
     size_report = f"Total data downloaded: {size_mb:.2f} MB"
     count_msg = f"Total geological units found: {len(final_results)}"
 
-    logging.info(size_report)
+    # [!] В логе: сначала количество найденных единиц, затем размер скачанных данных
     logging.info(count_msg)
+    logging.info(size_report)
 
+    # [!] В консоли: только количество (без размера данных)
     if config.BRIEF_CONSOLE:
         print(f"{len(final_results)} geological units loaded")
     else:
-        print(size_report)
         print(count_msg)
 
     save_geodata_to_csv(final_results, GEO_OUTPUT_FILE)

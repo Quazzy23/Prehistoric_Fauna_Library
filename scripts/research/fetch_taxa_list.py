@@ -25,7 +25,7 @@ except ImportError:
 # ==============================================================================
 # True  — БЫСТРЫЙ РЕЖИМ (Очередь задач + многопоточность по config.USE_PARALLEL)
 # False — ОТЛАДОЧНЫЙ РЕЖИМ (Синхронный DFS, строго сверху вниз по веточкам)
-FAST_CRAWL = True
+FAST_CRAWL = False
 
 # ==============================================================================
 # ПУТИ И ИНИЦИАЛИЗАЦИЯ ЛОГИРОВАНИЯ
@@ -233,6 +233,7 @@ class TaxaTreeCrawler:
         self.target_manifest = []
         self.discovered_genera = set()
         self.visited_urls = set()
+        self.total_bytes_downloaded = 0
 
         self.data_lock = threading.Lock()
         self.log_lock = threading.Lock()
@@ -501,6 +502,8 @@ class TaxaTreeCrawler:
 
         try:
             resp = session.get(page_url, timeout=12)
+            with self.data_lock:
+                self.total_bytes_downloaded += len(resp.content)
             if resp.status_code != 200:
                 return 'ERROR', display_name, page_url, None, [], warnings
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -626,7 +629,7 @@ class TaxaTreeCrawler:
                         next_tasks.append(('NO_LINK', item[1], None, None))
 
             if not config.BRIEF_CONSOLE:
-                sys.stdout.write(f"\rDiscovered: [Genera: {len(self.discovered_genera)}] [Targets: {len(self.target_manifest)}]")
+                sys.stdout.write(f"\rDiscovered: [Genera: {len(self.discovered_genera)}] [Pages: {len(self.target_manifest)}]")
                 sys.stdout.flush()
 
         return next_tasks
@@ -746,7 +749,16 @@ class TaxaTreeCrawler:
             print()
             print("Crawl completed.")
 
-        # Сохранение манифеста target_pages.csv
+        # 1. Логируем завершение обнаружения на двух отдельных строках
+        logger.info("Discovery finished.")
+        logger.info(f"Total target pages found: {len(self.target_manifest)}")
+
+        # 2. Логируем размер скачанных данных (только в лог)
+        size_mb = self.total_bytes_downloaded / (1024 * 1024)
+        size_report = f"Total data downloaded: {size_mb:.2f} MB"
+        logger.info(size_report)
+
+        # 3. И только потом сохраняем файл и пишем в лог, куда сохранили
         os.makedirs(TABLES_DIR, exist_ok=True)
         try:
             with open(TARGET_PAGES_CSV, 'w', newline='', encoding='utf-8-sig') as f:
@@ -758,14 +770,12 @@ class TaxaTreeCrawler:
         except Exception as e:
             logger.error(f"Failed to save {TARGET_PAGES_CSV}: {e}")
 
-        summary_msg = f"Discovery finished. Total targets: {len(self.target_manifest)}"
-        logger.info(summary_msg)
-
+        # 4. Вывод в консоль
         if config.BRIEF_CONSOLE:
             print(f"{len(self.target_manifest)} targets discovered")
         else:
-            print(f"TARGET PAGES DISCOVERED: {len(self.target_manifest)}")
-            print(f"SAVED TO: {TARGET_PAGES_CSV}")
+            print(f"Target pages found: {len(self.target_manifest)}")
+            print(f"Target pages saved to: {os.path.abspath(TARGET_PAGES_CSV)}")
             print("Script ended: FETCH_TAXA_LIST")
 
         logger.info("--- SCRIPT END: FETCH_TAXA_LIST ---")

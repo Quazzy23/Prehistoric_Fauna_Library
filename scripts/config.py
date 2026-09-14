@@ -20,102 +20,96 @@ sys.dont_write_bytecode = True
 # False — подробная техническая информация и прогресс-бары
 BRIEF_CONSOLE = False
 
-# ПУТЬ К ЛОГАМ (Вынос за пределы проекта)
-# Динамическое определение пути к логам в AppData текущего пользователя
-# Это будет работать на любой машине автоматически
+# ПУТЬ К ЛОГАМ (Вынос за пределы репозитория в системное хранилище Windows)
 LOGS_DIR = os.path.join(os.getenv('LOCALAPPDATA', ''), 'PFL_Library', 'logs')
+
+# БАЗОВЫЕ URL ВИКИПЕДИИ
+BASE_WIKI_URL = "https://en.wikipedia.org"
+GEO_WIKI_URL = f"{BASE_WIKI_URL}/wiki/Geologic_time_scale"
 
 
 # [1] ГЛОБАЛЬНЫЙ РЕЖИМ ИССЛЕДОВАНИЯ (THE MASTER SWITCH)
 # Выберите группу животных, с которой хотите работать. 
 # Это влияет на выбор ссылок, имена таблиц в БД и структуру папок.
-RESEARCH_MODE = "dinosaurs"
+RESEARCH_MODE = "elephants"
 
 
 # [2] НАСТРОЙКИ ИСТОЧНИКОВ (SOURCE MAPPING: CLADE TREE CRAWLER)
-# start_url     — верхняя граница (откуда начинаем обход)
-# stop_url      — нижняя граница (ссылка, на которой останавливаемся и не идем вглубь)
-# taxonomy_node — опорный таксономический узел для дерева предков
-# suffixes      — суффиксы для поиска статей и шаблонов таксономии (разрешение неоднозначностей)
+# start_article — начальная статья (откуда начинаем обход)
+# stop_article  — стоп-граница (одиночная статья, список статей или None)
+# taxonomy_node — опорный таксономический узел для дерева предков (Фильтр Бизона)
 WIKI_SETTINGS = {
     "dinosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Dinosauromorpha",
-        "stop_url": "https://en.wikipedia.org/wiki/Avialae",
-        "taxonomy_node": "Dinosauromorpha",
-        "suffixes": ["", "_(dinosaur)", "_(reptile)", "_(archosaur)"]
+        "start_article": "Dinosauromorpha",
+        "stop_article": ["Avialae"],
+        "taxonomy_node": "Dinosauromorpha"
     },
     "pterosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Pterosauromorpha",
-        "stop_url": None,
-        "taxonomy_node": "Pterosauromorpha",
-        "suffixes": ["", "_(pterosaur)", "_(reptile)"],
+        "start_article": "Pterosauromorpha",
+        "stop_article": None,
+        "taxonomy_node": "Pterosauromorpha"
     },
     "ichthyosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Ichthyosauromorpha",
-        "stop_url": None,
-        "taxonomy_node": "Ichthyosauromorpha",
-        "suffixes": ["", "_(ichthyosaur)", "_(reptile)"],
+        "start_article": "Ichthyosauromorpha",
+        "stop_article": None,
+        "taxonomy_node": "Ichthyosauromorpha"
     },
     "sauropterygians": {
-        "start_url": "https://en.wikipedia.org/wiki/Sauropterygiformes",
-        "stop_url": None,
-        "taxonomy_node": "Sauropterygiformes",
-        "suffixes": [
-            "", "_(plesiosaur)", "_(pliosaur)", "_(reptile)", "_(sauropterygian)"],
+        "start_article": "Sauropterygiformes",
+        "stop_article": None,
+        "taxonomy_node": "Sauropterygiformes"
     },
     "mosasaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Mosasauria",
-        "stop_url": None,
-        "taxonomy_node": "Mosasauria",
-        "suffixes": ["", "_(mosasaur)", "_(reptile)", "_(lizard)"],
+        "start_article": "Mosasauria",
+        "stop_article": None,
+        "taxonomy_node": "Mosasauria"
     },
-    # Добавлены для теста
     "cariamiformes": {
-        "start_url": "https://en.wikipedia.org/wiki/Cariamiformes",
-        "stop_url": None,
-        "taxonomy_node": "Cariamiformes",
-        "suffixes": ["", "_(bird)"]
+        "start_article": "Cariamiformes",
+        "stop_article": None,
+        "taxonomy_node": "Cariamiformes"
     },
     "dicynodonts": {
-        "start_url": "https://en.wikipedia.org/wiki/Dicynodontia",
-        "stop_url": None,
-        "taxonomy_node": "Dicynodontia",
-        "suffixes": ["", "_(reptile)"]
+        "start_article": "Dicynodontia",
+        "stop_article": None,
+        "taxonomy_node": "Dicynodontia"
     },
     "elephants": {
-        "start_url": "https://en.wikipedia.org/wiki/Proboscidea",
-        "stop_url": None,
-        "taxonomy_node": "Proboscidea",
-        "suffixes": ["", "_(mammal)"]
+        "start_article": "Elephantidae",
+        "stop_article": None,
+        "taxonomy_node": "Elephantidae"
     },
-    "psedosuchians": {
-        "start_url": "https://en.wikipedia.org/wiki/Pseudosuchia",
-        "stop_url": None,
-        "taxonomy_node": "Pseudosuchia",
-        "suffixes": ["", "_(crocodile)"]
+    "pseudosuchians": {
+        "start_article": "Pseudosuchia",
+        "stop_article": None,
+        "taxonomy_node": "Pseudosuchia"
     },
     "archosaurs": {
-        "start_url": "https://en.wikipedia.org/wiki/Archosauriformes",
-        "stop_url": "https://en.wikipedia.org/wiki/Avialae",
-        "taxonomy_node": "Pseudosuchia",
-        "suffixes": ["", "_kk"]
+        "start_article": "Archosauriformes",
+        "stop_article": ["Avialae"],
+        "taxonomy_node": "Archosauriformes"
     },
 }
 
-# Динамическое извлечение настроек на основе выбранного RESEARCH_MODE
+# Динамическое извлечение и сборка URL на основе выбранного RESEARCH_MODE
 _current = WIKI_SETTINGS.get(RESEARCH_MODE, WIKI_SETTINGS["dinosaurs"])
 
-WIKI_START_URL = _current.get("start_url")
-WIKI_STOP_URL = _current.get("stop_url")
-TAXONOMY_START_NODE = _current["taxonomy_node"]
-WIKI_SUFFIXES = _current.get("suffixes", [""])
+WIKI_START_URL = f"{BASE_WIKI_URL}/wiki/{_current['start_article']}"
 
-BASE_WIKI_URL = "https://en.wikipedia.org/wiki/"
-GEO_WIKI_URL = "https://en.wikipedia.org/wiki/Geologic_time_scale"
+# Сборка WIKI_STOP_URL (поддержка строки, списка или None)
+_raw_stop = _current.get("stop_article")
+if isinstance(_raw_stop, list):
+    WIKI_STOP_URL = [f"{BASE_WIKI_URL}/wiki/{s}" for s in _raw_stop]
+elif isinstance(_raw_stop, str):
+    WIKI_STOP_URL = f"{BASE_WIKI_URL}/wiki/{_raw_stop}"
+else:
+    WIKI_STOP_URL = None
+
+TAXONOMY_START_NODE = _current.get("taxonomy_node", "Dinosauromorpha")
 
 
 # [3] ОПРЕДЕЛЕНИЕ СЛОЯ (THE MASTER LAYER SWITCH)
-# True  — РЕЖИМ MASTER (Производственный эталон).
+# True  — РЕЖИМ MASTER (Производственный эталон / Golden Data).
 # False — РЕЖИМ SANDBOX (Песочница).
 IS_MASTER = True
 
@@ -124,39 +118,29 @@ SANDBOX_NAME = "sandbox"
 DATA_LAYER   = MASTER_NAME if IS_MASTER else SANDBOX_NAME
 
 
-# [4] ЛОГИКА СБОРА И ИСТОЧНИКИ ДАННЫХ (DATA INPUT & FETCH SETTINGS)
-if IS_MASTER:
-    # --- АВТОМАТИЧЕСКИЕ НАСТРОЙКИ ДЛЯ MASTER (НЕЛЬЗЯ СЛОМАТЬ) ---
-    USE_CUSTOM_LIST          = False  # Только полный обход дерева
-    FETCH_SYNONYMS           = True   # Сбор всех синонимов обязателен
-    INCLUDE_NOMINA_NUDA      = True   # Сбор нудумов обязателен
-    INCLUDE_UNCERTAIN_STAGES = False  # Только твердо установленные ярусы
-else:
-    # --- СВОБОДНЫЕ НАСТРОЙКИ ДЛЯ SANDBOX (МЕНЯЙТЕ ДЛЯ ТЕСТОВ) ---
-    USE_CUSTOM_LIST          = False  # True — тест по файлу из custom_lists/
-    FETCH_SYNONYMS           = True   # False — быстрый тест без синонимов
-    INCLUDE_NOMINA_NUDA      = True   # False — исключить нудумы
-    INCLUDE_UNCERTAIN_STAGES = False  # True — включать "Possible Albian"
-
+# [4] ЛОГИКА СБОРА ДАННЫХ (DATA INPUT & FETCH SETTINGS)
+# USE_CUSTOM_LIST: True — парсить только список родов из custom_lists/, False — полный обход дерева
+USE_CUSTOM_LIST = False
 CUSTOM_LIST_NAME = "test_genera.txt"
 CREATE_CUSTOM_LIST_DIR = True
 
 
 # [5] ПРОИЗВОДИТЕЛЬНОСТЬ (PERFORMANCE)
 # USE_PARALLEL: Использовать многопоточность для ускорения парсинга (ThreadPool).
-# MAX_WORKERS: Количество одновременных потоков. Рекомендуется 20-25.
-USE_PARALLEL = True
+# MAX_WORKERS: Количество одновременных потоков. Рекомендуется 20.
+USE_PARALLEL = False
 MAX_WORKERS = 20
 
 
 # [6] НАСТРОЙКИ БАЗЫ ДАННЫХ (DATABASE)
-# Все данные хранятся в едином файле prehistoric_library.sqlite
-DB_NAME = "prehistoric_library.sqlite"
+MASTER_DB_NAME = "prehistoric_library.sqlite"
+SANDBOX_DB_NAME = "sandbox_library.sqlite"
+DB_NAME = MASTER_DB_NAME if IS_MASTER else SANDBOX_DB_NAME
 
-# Названия таблиц формируются динамически
-TABLE_SPECIES = RESEARCH_MODE             # Например: "dinosaurs" или "pterosaurs"
+# Названия таблиц формируются динамически под активный режим
+TABLE_SPECIES = RESEARCH_MODE                 # Например: "dinosaurs" или "cariamiformes"
 TABLE_TAXONOMY = f"{RESEARCH_MODE}_taxonomy" # Например: "dinosaurs_taxonomy"
-TABLE_GEOLOGY = "geological_time"         # Общая таблица для всех групп
+TABLE_GEOLOGY = "geological_time"             # Общая таблица геохронологии для всех групп
 
 
 # [7] ДИНАМИЧЕСКИЕ ПУТИ К РЕЕСТРАМ (REGISTRY PATHS)
@@ -164,7 +148,7 @@ CUSTOM_LISTS_DIR = "custom_lists"
 STORAGE_BASE_NAME = "export"
 
 # --- А) ПУТИ ДЛЯ ИССЛЕДОВАНИЯ (RESEARCH) ---
-# Эти пути меняются в зависимости от флагов (master/sandbox)
+# Эти пути переключаются между master и sandbox
 STORAGE_ROOT  = os.path.join(STORAGE_BASE_NAME, DATA_LAYER, RESEARCH_MODE)
 TABLES_DIR    = os.path.join(STORAGE_ROOT, "tables")
 SNAPSHOTS_DIR = os.path.join(STORAGE_ROOT, "snapshots")
@@ -174,22 +158,19 @@ DELETED_REGISTRY = os.path.join(STORAGE_ROOT, "deleted_registry.json")
 MIGRATIONS_FILE  = os.path.join(STORAGE_ROOT, "known_migrations.json")
 
 # --- Б) ПУТИ ДЛЯ ПРОИЗВОДСТВА (PRODUCTION) ---
-# Эти пути ВСЕГДА ведут в master, чтобы защитить реальные папки моделей
+# Эти пути ВСЕГДА ведут строго в master
 PROD_ROOT           = os.path.join(STORAGE_BASE_NAME, MASTER_NAME, RESEARCH_MODE)
 PROD_TABLES_DIR     = os.path.join(PROD_ROOT, "tables")
 PROD_MASTER_CATALOG = os.path.join(PROD_ROOT, "species_catalog.json")
 PROD_DELETED_REG    = os.path.join(PROD_ROOT, "deleted_registry.json")
 PROD_MIGRATIONS     = os.path.join(PROD_ROOT, "known_migrations.json")
 
-# База и история (динамические)
-MASTER_DB_NAME = "prehistoric_library.sqlite"
-SANDBOX_DB_NAME = "sandbox_library.sqlite"
-DB_NAME = MASTER_DB_NAME if IS_MASTER else SANDBOX_DB_NAME
+# Файл истории изменений
 HISTORY_FILE = "project_history.txt" if IS_MASTER else "sandbox_history.txt"
 
 
 # [8] НАУЧНАЯ ИЕРАРХИЯ СТАТУСОВ (SCIENTIFIC WEIGHTS)
-# 4 базовых научных статуса PFL
+# 4 канонических статуса PFL
 STATUS_WEIGHTS = {
     'nudum': 1,
     'dubious': 2,
